@@ -180,7 +180,7 @@ function Attendance({session,notify}) {
   const punch=async(type)=>{try{await api("punch",{session,type});notify("success",`${type} time recorded.`);load()}catch(e){notify("error",e.message)}};
 
   const downloadFormat=(type)=>{
-    const headers=["employeeCode","date","in","out","officeMinutes","breakMinutes","status"];
+    const headers=["employeeId","date","in","out","officeMinutes","breakMinutes","status"];
     const sample=[["12345","2026-10-01","09:30:00","18:00:00","510","30","PRESENT"]];
     if(type==="csv"){
       const csv=[headers.join(","),...sample.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");
@@ -395,7 +395,7 @@ function Employees({session,notify}) {
       <form className="panel form-grid" onSubmit={save}>
         <PanelTitle title={editing ? "Edit User" : "User Create"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
         <label>Employee Name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label>
-        <label>Employee Code<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
+        <label>Employee Id<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
         <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing} autoComplete="username"/></label>
         <label>{editing ? "New Password (Optional)" : "Password"}<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete={editing ? "new-password" : "new-password"} required={!editing} minLength={4} placeholder={editing ? "Leave blank to keep current password" : "Enter login password"}/></label>
         <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
@@ -413,7 +413,7 @@ function Employees({session,notify}) {
         <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
         <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> User Create</> : <><Plus size={16}/> User Create</>}</button>
       </form>
-      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Username</th><th>Country</th><th>Region</th><th>State</th><th>Division</th><th>District</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.country}</td><td>{r.region}</td><td>{r.state}</td><td>{r.division}</td><td>{r.district}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
+      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Country</th><th>Region</th><th>State</th><th>Division</th><th>District</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.country}</td><td>{r.region}</td><td>{r.state}</td><td>{r.division}</td><td>{r.district}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
     </div>
   </div>
 }
