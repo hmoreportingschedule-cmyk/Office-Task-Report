@@ -327,21 +327,22 @@ function Templates({session,notify}) {
 }
 
 function Employees({session,notify}) {
-  const empty={name:"",code:"",username:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",country:"",region:"",state:"",division:"",district:""};
+  const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",country:"",region:"",state:"",division:"",district:""};
   const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false);
   const load=async()=>{try{const r=await api("employees",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
-  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
+  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
   const reset=()=>{setForm(empty);setEditing(false)};
-  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","Employee updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`Employee created. Initial password: ${r.temporaryPassword||form.code}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","Employee updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
   return <div>
-    <PageHead title="Employees" subtitle="Master Admin can create, edit and delete users. Changes sync to the Master Users sheet." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
+    <PageHead title="User Creat" subtitle="Master Admin can create, edit and delete users. Changes sync to the Master Users sheet." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
     <form className="panel form-grid" onSubmit={save}>
       <PanelTitle title={editing ? "Edit Employee" : "Add Employee"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
       <label>Employee Name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label>
       <label>Employee Code<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
-      <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing}/></label>
+      <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing} autoComplete="username"/></label>
+      {!editing && <label>Password<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete="new-password" required minLength={4} placeholder="Enter login password"/></label>}
       <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
       <label>Designation<input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})}/></label>
       <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
@@ -355,7 +356,7 @@ function Employees({session,notify}) {
       <label>State<input value={form.state} onChange={e=>setForm({...form,state:e.target.value})} placeholder="State"/></label>
       <label>Division<input value={form.division} onChange={e=>setForm({...form,division:e.target.value})} placeholder="Division"/></label>
       <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
-      <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Employee</> : <><Plus size={16}/> Create Employee</>}</button>
+      <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Employee</> : <><Plus size={16}/> Create</>}</button>
     </form>
     <section className="panel"><PanelTitle title="All Users"/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Username</th><th>Country</th><th>Region</th><th>State</th><th>Division</th><th>District</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.country}</td><td>{r.region}</td><td>{r.state}</td><td>{r.division}</td><td>{r.district}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
   </div>
