@@ -8,11 +8,7 @@ import {
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import "./styles.css";
 
-// Google Apps Script Web App endpoint
-// V.2 configured endpoint for Office Task Report
-const API_URL =
-  import.meta.env.VITE_APPS_SCRIPT_URL ||
-  "https://script.google.com/macros/s/AKfycbyOXQM6gr2Lb9zKwXFzp8Rb4Sr0rguX-xlMJtRaDYXy845ayLA3kfpPbgPgyT6UhEOo_Q/exec";
+const API_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
 
 async function api(action, payload = {}) {
   if (!API_URL) throw new Error("VITE_APPS_SCRIPT_URL is not configured.");
@@ -83,6 +79,8 @@ function Login({ onLogin, notify }) {
     e.preventDefault();
     setBusy(true);
     try {
+      const health = await api("health");
+      if (!health.ready) throw new Error(health.message || "Backend setup pending.");
       const r = await api("login", { username: user.trim(), password });
       onLogin(r.session);
     } catch (e) {
