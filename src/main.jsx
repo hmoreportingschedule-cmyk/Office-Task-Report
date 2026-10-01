@@ -115,7 +115,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
     ["attendance", "Attendance", Clock3],
     ["tasks", "My Tasks", ClipboardList],
     ["templates", "Task Templates", FileText],
-    ["employees", "Employees", Users],
+    ["employees", "Users", Users],
     ["approvals", "Approvals", CheckCircle2],
     ["reports", "Progress Reports", CalendarDays],
     ["notifications", "Notifications", Bell],
@@ -343,7 +343,7 @@ function Employees({session,notify}) {
         <label>Employee Name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label>
         <label>Employee Code<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
         <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing} autoComplete="username"/></label>
-        {!editing && <label>Password<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete="new-password" required minLength={4} placeholder="Enter login password"/></label>}
+        <label>{editing ? "New Password (Optional)" : "Password"}<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete={editing ? "new-password" : "new-password"} required={!editing} minLength={4} placeholder={editing ? "Leave blank to keep current password" : "Enter login password"}/></label>
         <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
         <label>Designation<input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})}/></label>
         <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
