@@ -8,7 +8,11 @@ import {
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import "./styles.css";
 
-const API_URL = import.meta.env.VITE_APPS_SCRIPT_URL || "";
+// Office Task Report - Google Apps Script Web App
+// V.7: default endpoint configured; Vercel env variable can still override it.
+const API_URL =
+  import.meta.env.VITE_APPS_SCRIPT_URL ||
+  "https://script.google.com/macros/s/AKfycbwpHrngTPA6skC0VNaR3BWeXW_ELni6cd5wQSypzVGAXyL9cJEFlYBw1YHI07NrExYusg/exec";
 
 async function api(action, payload = {}) {
   if (!API_URL) throw new Error("VITE_APPS_SCRIPT_URL is not configured.");
