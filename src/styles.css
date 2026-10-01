@@ -33,3 +33,4 @@
 .period-note{display:flex;align-items:center;gap:7px;background:#f0faf8;border:1px solid #d8eee9;color:#52716d;border-radius:10px;padding:10px 12px;font-size:11px}
 .period-note svg{color:#0f766e;flex:0 0 auto}
 @media(max-width:620px){.template-period{grid-template-columns:1fr 1fr}.period-arrow{display:none}}
+.compact-form{gap:10px}.assign-note{display:flex;align-items:center;gap:7px;background:#f0faf8;border:1px solid #d8eee9;color:#52716d;border-radius:10px;padding:10px 12px;font-size:11px}.section-divider{height:1px;background:var(--border);margin:20px 0}.location-heading{font-size:12px;font-weight:800;color:#0f766e;background:#f0faf8;border:1px solid #d8eee9;border-radius:10px;padding:10px 12px}.form-grid .location-heading{grid-column:1/-1}

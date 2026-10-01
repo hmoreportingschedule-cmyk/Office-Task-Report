@@ -197,8 +197,13 @@ function Tasks({session,notify}) {
 }
 
 function Templates({session,notify}) {
+  const empty={name:"",details:"",category:"",priority:"Normal",fromDay:"1",toDay:"1"};
   const [rows,setRows]=useState([]);
-  const [form,setForm]=useState({name:"",details:"",category:"",priority:"Normal",fromDay:"1",toDay:"1"});
+  const [form,setForm]=useState(empty);
+  const [editing,setEditing]=useState(false);
+  const [users,setUsers]=useState([]);
+  const [assign,setAssign]=useState({templateId:"",username:""});
+  const [busy,setBusy]=useState(false);
 
   const taskCategories = {
     "Followup":["Monthly Report","Hind Mushawarat Task","HOD-Department Points Task","Data Required","Other"],
@@ -210,7 +215,10 @@ function Templates({session,notify}) {
   const taskNames=["Followup","File Work","Outdoor","Meeting","Other"];
   const categories=taskCategories[form.name] || [];
 
-  const load=async()=>{try{const r=await api("templates",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
+  const load=async()=>{try{
+    const r=await api("templates",{session});setRows(r.rows||[]);
+    const u=await api("employees",{session});setUsers((u.rows||[]).filter(x=>x.status==="ACTIVE" && ["EMPLOYEE","HOD"].includes(x.role)));
+  }catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
 
   const changeTask=(name)=>{
@@ -218,26 +226,50 @@ function Templates({session,notify}) {
     setForm({...form,name,category:list[0]||""});
   };
 
+  const reset=()=>{setForm(empty);setEditing(false)};
+  const edit=(r)=>{
+    setForm({name:r.name||"",details:r.details||"",category:r.category||"",priority:r.priority||"Normal",fromDay:String(r.fromDay||1),toDay:String(r.toDay||r.fromDay||1),id:r.id});
+    setEditing(true);
+    window.scrollTo({top:0,behavior:"smooth"});
+  };
+
   const save=async(e)=>{
-    e.preventDefault();
+    e.preventDefault(); setBusy(true);
     const from=Number(form.fromDay), to=Number(form.toDay);
-    if(from<1 || to>31 || from>to){
-      notify("error","Task period 1 se 31 ke beech aur From Day, To Day se chhota/equal hona chahiye.");
-      return;
-    }
+    if(from<1 || to>31 || from>to){notify("error","Task period 1 se 31 ke beech aur From Day, To Day se chhota/equal hona chahiye.");setBusy(false);return;}
     try{
-      await api("createTemplate",{session,template:{...form,fromDay:from,toDay:to}});
-      setForm({name:"",details:"",category:"",priority:"Normal",fromDay:"1",toDay:"1"});
-      notify("success","Task template created.");
-      load();
+      if(editing){
+        await api("updateTemplate",{session,template:{...form,fromDay:from,toDay:to}});
+        notify("success","Task template updated.");
+      }else{
+        await api("createTemplate",{session,template:{...form,fromDay:from,toDay:to}});
+        notify("success","Task template created.");
+      }
+      reset(); load();
+    }catch(e){notify("error",e.message)}finally{setBusy(false)}
+  };
+
+  const remove=async(r)=>{
+    if(!window.confirm(`Delete template "${r.name} - ${r.category}"?`)) return;
+    try{await api("deleteTemplate",{session,templateId:r.id});notify("success","Template deleted.");load();}
+    catch(e){notify("error",e.message)}
+  };
+
+  const assignTemplate=async(e)=>{
+    e.preventDefault();
+    if(!assign.templateId || !assign.username){notify("error","Template aur Employee/HOD select karein.");return;}
+    try{
+      const r=await api("assignTemplate",{session,templateId:assign.templateId,username:assign.username});
+      notify("success",`Template ${r.name} ko one-time assign ho gaya.`);
+      setAssign({templateId:"",username:""});
     }catch(e){notify("error",e.message)}
   };
 
   return <div>
-    <PageHead title="Task Templates" subtitle="Reusable work templates for Admin/HOD."/>
+    <PageHead title="Task Templates" subtitle="Reusable work templates for Admin/HOD." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
     <div className="two-col">
       <form className="panel form-grid" onSubmit={save}>
-        <PanelTitle title="Create Template"/>
+        <PanelTitle title={editing ? "Edit Template" : "Create Template"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
         <label>Task Name
           <select value={form.name} onChange={e=>changeTask(e.target.value)} required>
             <option value="">Select Task Name</option>
@@ -259,107 +291,76 @@ function Templates({session,notify}) {
           </select>
         </label>
         <div className="template-period full-span">
-          <label>From Day
-            <select value={form.fromDay} onChange={e=>setForm({...form,fromDay:e.target.value})}>
-              {Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}
-            </select>
-          </label>
+          <label>From Day<select value={form.fromDay} onChange={e=>setForm({...form,fromDay:e.target.value})}>{Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}</select></label>
           <div className="period-arrow">TO</div>
-          <label>To Day
-            <select value={form.toDay} onChange={e=>setForm({...form,toDay:e.target.value})}>
-              {Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}
-            </select>
-          </label>
+          <label>To Day<select value={form.toDay} onChange={e=>setForm({...form,toDay:e.target.value})}>{Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}</select></label>
         </div>
         <div className="period-note full-span"><CalendarDays size={15}/> Monthly task period: <b>{form.fromDay} to {form.toDay} date</b>. 30-day months will naturally have no 31st date.</div>
-        <button className="primary full-span"><Plus size={16}/> Create Template</button>
+        <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Template</> : <><Plus size={16}/> Create Template</>}</button>
       </form>
-      <section className="panel"><PanelTitle title="Template Library"/>
-        <SimpleTable columns={["Task Name","Category","Period","Priority"]} rows={rows.map(r=>[r.name,r.category,`${r.fromDay || 1}–${r.toDay || r.fromDay || 1}`,r.priority])}/>
-      </section>
-    </div>
-  </div>
-}
-function Employees({session,notify}) {
-  const empty={name:"",code:"",username:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:""};
-  const [rows,setRows]=useState([]);
-  const [form,setForm]=useState(empty);
-  const [editing,setEditing]=useState(false);
-  const [busy,setBusy]=useState(false);
-
-  const load=async()=>{
-    try{const r=await api("employees",{session});setRows(r.rows||[])}
-    catch(e){notify("error",e.message)}
-  };
-  useEffect(()=>{load()},[]);
-
-  const edit=(r)=>{
-    setForm({
-      name:r.name||"",code:r.code||"",username:r.username||"",role:r.role||"EMPLOYEE",
-      department:r.department||"",designation:r.designation||"",phone:r.phone||"",
-      whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||""
-    });
-    setEditing(true);
-  };
-
-  const reset=()=>{setForm(empty);setEditing(false)};
-
-  const save=async(e)=>{
-    e.preventDefault(); setBusy(true);
-    try{
-      if(editing){
-        await api("updateEmployee",{session,employee:form});
-        notify("success","Employee updated and synced.");
-      }else{
-        const r=await api("createEmployee",{session,employee:form});
-        notify("success",`Employee created. Initial password: ${r.temporaryPassword||form.code}`);
-      }
-      reset(); load();
-    }catch(e){notify("error",e.message)}
-    finally{setBusy(false)}
-  };
-
-  const remove=async(r)=>{
-    if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}
-    if(!window.confirm(`Delete ${r.name} (${r.code})?`)) return;
-    try{
-      await api("deleteEmployee",{session,username:r.username});
-      notify("success","User deleted/deactivated and Google Sheet synced.");
-      load();
-    }catch(e){notify("error",e.message)}
-  };
-
-  return <div>
-    <PageHead
-      title="Employees"
-      subtitle="Master Admin can create, edit and delete users. Changes sync to the Master Users sheet."
-      action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}
-    />
-    <div className="two-col">
-      <form className="panel form-grid" onSubmit={save}>
-        <PanelTitle title={editing ? "Edit Employee" : "Add Employee"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
-        {Object.entries({
-          name:"Employee Name",code:"Employee Code",username:"Username",department:"Department",
-          designation:"Designation",phone:"Contact",whatsapp:"WhatsApp",office:"Office Location",address:"Office Address"
-        }).map(([k,l])=><label key={k}>{l}<input value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} required={["name","code","username"].includes(k)} disabled={editing && k==="code"}/></label>)}
-        <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
-        <button className="primary" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Employee</> : <><Plus size={16}/> Create Employee</>}</button>
-      </form>
-
       <section className="panel">
-        <PanelTitle title="All Users"/>
-        <div className="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Username</th><th>Department</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
-        <tbody>{rows.map((r,i)=><tr key={i}>
-          <td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.department}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td>
-          <td><div className="table-actions">
-            <button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button>
-            <button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button>
-          </div></td>
-        </tr>)}</tbody></table></div>
+        <PanelTitle title="Assign Template One Time"/>
+        <form className="form-grid compact-form" onSubmit={assignTemplate}>
+          <label>Template
+            <select value={assign.templateId} onChange={e=>setAssign({...assign,templateId:e.target.value})} required>
+              <option value="">Select Template</option>
+              {rows.map(r=><option key={r.id} value={r.id}>{r.name} · {r.category}</option>)}
+            </select>
+          </label>
+          <label>Employee / HOD
+            <select value={assign.username} onChange={e=>setAssign({...assign,username:e.target.value})} required>
+              <option value="">Select Employee / HOD</option>
+              {users.map(u=><option key={u.username} value={u.username}>{u.name} · {u.role} · {u.employeeCode}</option>)}
+            </select>
+          </label>
+          <div className="assign-note full-span">Select karke <b>Assign One Time</b> karein. Task selected user ke current-year Tasks sheet mein immediately add hoga.</div>
+          <button className="primary full-span"><CheckCircle2 size={16}/> Assign One Time</button>
+        </form>
+        <div className="section-divider"/>
+        <PanelTitle title="Template Library"/>
+        <div className="table-wrap"><table><thead><tr><th>Task Name</th><th>Category</th><th>Period</th><th>Priority</th><th>Action</th></tr></thead><tbody>
+          {rows.length ? rows.map(r=><tr key={r.id}><td>{r.name}</td><td>{r.category}</td><td>{`${r.fromDay || 1}–${r.toDay || r.fromDay || 1}`}</td><td>{r.priority}</td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)}><X size={14}/></button></div></td></tr>) : <tr><td colSpan="5" className="empty">No records found.</td></tr>}
+        </tbody></table></div>
       </section>
     </div>
   </div>
 }
+
+function Employees({session,notify}) {
+  const empty={name:"",code:"",username:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",country:"",region:"",state:"",division:"",district:""};
+  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false);
+  const load=async()=>{try{const r=await api("employees",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
+  useEffect(()=>{load()},[]);
+  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
+  const reset=()=>{setForm(empty);setEditing(false)};
+  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","Employee updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`Employee created. Initial password: ${r.temporaryPassword||form.code}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
+  return <div>
+    <PageHead title="Employees" subtitle="Master Admin can create, edit and delete users. Changes sync to the Master Users sheet." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
+    <form className="panel form-grid" onSubmit={save}>
+      <PanelTitle title={editing ? "Edit Employee" : "Add Employee"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
+      <label>Employee Name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label>
+      <label>Employee Code<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
+      <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing}/></label>
+      <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
+      <label>Designation<input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})}/></label>
+      <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
+      <label>Contact<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label>
+      <label>WhatsApp<input value={form.whatsapp} onChange={e=>setForm({...form,whatsapp:e.target.value})}/></label>
+      <label>Office Location<input value={form.office} onChange={e=>setForm({...form,office:e.target.value})}/></label>
+      <label>Office Address<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label>
+      <div className="location-heading full-span">Employee Location / Reporting Area</div>
+      <label>Country<input value={form.country} onChange={e=>setForm({...form,country:e.target.value})} placeholder="Country"/></label>
+      <label>Region<input value={form.region} onChange={e=>setForm({...form,region:e.target.value})} placeholder="Region"/></label>
+      <label>State<input value={form.state} onChange={e=>setForm({...form,state:e.target.value})} placeholder="State"/></label>
+      <label>Division<input value={form.division} onChange={e=>setForm({...form,division:e.target.value})} placeholder="Division"/></label>
+      <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
+      <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Employee</> : <><Plus size={16}/> Create Employee</>}</button>
+    </form>
+    <section className="panel"><PanelTitle title="All Users"/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Username</th><th>Country</th><th>Region</th><th>State</th><th>Division</th><th>District</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.country}</td><td>{r.region}</td><td>{r.state}</td><td>{r.division}</td><td>{r.district}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
+  </div>
+}
+
 function Approvals({session,notify}) {
   const [rows,setRows]=useState([]);
   const load=async()=>{try{const r=await api("approvals",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
