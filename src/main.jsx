@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard,
+  Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard, ClipboardCheck,
   LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search,
   UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet
 } from "lucide-react";
@@ -67,6 +67,7 @@ function App() {
           {view === "approvals" && <Approvals session={session} notify={notify} />}
           {view === "reports" && <Reports session={session} notify={notify} />}
           {view === "notifications" && <Notifications session={session} notify={notify} />}
+          {view === "requests" && <RequestsCenter session={session} notify={notify} />}
           {view === "settings" && <SettingsPage session={session} notify={notify} />}
         </div>
       </main>
@@ -120,11 +121,12 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
     ["approvals", "Approvals", CheckCircle2],
     ["reports", "Progress Reports", CalendarDays],
     ["notifications", "Notifications", Bell],
+    ["requests", "Requests & Advanced", ClipboardCheck],
     ["settings", "Settings", Settings],
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.1</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.20</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -232,8 +234,8 @@ function Attendance({session,notify}) {
     <div className="attendance-hero panel">
       <div><span className="status-dot"/> Today</div>
       <div className="big-time">{data?.today?.in || "--:--"} <span>→</span> {data?.today?.out || "--:--"}</div>
-      <div className="muted">Office Time: <b>{data?.today?.officeMinutes || 0} min</b> · Break: <b>{data?.today?.breakMinutes || 0} min</b></div>
-      <div className="action-row"><button className="primary" onClick={()=>punch("IN")} disabled={!!data?.today?.in}>IN Time</button><button className="secondary" onClick={()=>punch("OUT")} disabled={!data?.today?.in || !!data?.today?.out}>OUT Time</button></div>
+      <div className="muted">Office Time: <b>{data?.today?.officeMinutes || 0} min</b> · Break: <b>{data?.today?.breakMinutes || 0} min</b></div>{data?.today?.nonWorking && <div className="assign-note">Today is {data?.today?.reason || "Weekoff"}. Attendance is not required.</div>}
+      <div className="action-row"><button className="primary" onClick={()=>punch("IN")} disabled={!!data?.today?.in || data?.today?.nonWorking}>IN Time</button><button className="secondary" onClick={()=>punch("OUT")} disabled={!data?.today?.in || !!data?.today?.out || data?.today?.nonWorking}>OUT Time</button></div>
     </div>
     <section className="panel"><PanelTitle title="Recent Attendance"/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status])}/>}</section>
   </div>
@@ -440,7 +442,53 @@ function Notifications({session,notify}) {
   return <div><PageHead title="Notifications" subtitle="Reminders, approvals and system alerts."/><section className="panel">{rows.length?rows.map((n,i)=><div className="notice" key={i}><div className="notice-icon"><Bell size={17}/></div><div><b>{n.title}</b><p>{n.message}</p><small>{n.time}</small></div></div>):<Empty text="No new notifications."/>}</section></div>
 }
 
-function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.1</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeCode_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
+function RequestsCenter({session,notify}) {
+  const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
+  const canRequest=Boolean(session.code || session.employeeId);
+  const [data,setData]=useState({requests:[],holidays:[],approvals:[],weekoff:"0"});
+  const [form,setForm]=useState({type:"Leave",date:"",details:""});
+  const [holiday,setHoliday]=useState({date:"",name:"",type:"PUBLIC"});
+  const [weekoff,setWeekoff]=useState("0");
+  const [busy,setBusy]=useState(false);
+  const requestTypes=["Leave","Attendance Correction","Day Adjustment","Time Adjustment","Meeting","Meeting Journey","3 Days Qafila","Tarbiyati Ijtima","Others"];
+  const weekDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const load=async()=>{try{const r=await api("advanced",{session});setData(r);setWeekoff(String(r.weekoff||"0"))}catch(e){notify("error",e.message)}};
+  useEffect(()=>{load()},[]);
+  const submitRequest=async(e)=>{e.preventDefault();setBusy(true);try{await api("createRequest",{session,request:form});notify("success","Request submit ho gayi. Approval ke liye bhej di gayi.");setForm({type:"Leave",date:"",details:""});load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const addHoliday=async(e)=>{e.preventDefault();try{await api("createHoliday",{session,holiday});notify("success","Holiday add ho gayi.");setHoliday({date:"",name:"",type:"PUBLIC"});load()}catch(e){notify("error",e.message)}};
+  const delHoliday=async(id)=>{if(!window.confirm("Is holiday ko delete karna hai?"))return;try{await api("deleteHoliday",{session,id});notify("success","Holiday delete ho gayi.");load()}catch(e){notify("error",e.message)}};
+  const saveWeekoff=async()=>{try{await api("saveWeekoff",{session,day:weekoff});notify("success","Weekoff setting save ho gayi.")}catch(e){notify("error",e.message)}};
+  const approve=async(id,status)=>{try{await api("approvalAction",{session,id,status});notify("success",`Request ${status.toLowerCase()} ho gayi.`);load()}catch(e){notify("error",e.message)}};
+  const exportRequests=()=>{const rows=data.requests||[];const csv=["Type,Date,Details,Status,Created At",...rows.map(r=>[r.type,r.date,r.details,r.status,r.createdAt].map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(","))].join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="My_Requests.csv";a.click();};
+  return <div>
+    <PageHead title="Requests & Advanced" subtitle="Leave, attendance correction, schedule requests, holidays and advanced controls." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
+    <div className="two-col">
+      <section className="panel"><PanelTitle title="Create Request"/>
+        {!canRequest && <div className="assign-note">Master Admin account ke liye personal request ki zarurat nahi hai. Employee/HOD accounts yahan request submit kar sakte hain.</div>}
+        <form className="form-grid" onSubmit={submitRequest}>
+          <label>Request Type<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{requestTypes.map(x=><option key={x}>{x}</option>)}</select></label>
+          <label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/></label>
+          <label className="full-span">Details<textarea value={form.details} onChange={e=>setForm({...form,details:e.target.value})} placeholder="Request details / reason" required/></label>
+          <button className="primary full-span" disabled={busy || !canRequest}><Plus size={16}/> Submit Request</button>
+        </form>
+      </section>
+      <section className="panel"><PanelTitle title="My Requests" action={<button className="secondary" onClick={exportRequests}><Download size={15}/> CSV</button>}/><SimpleTable columns={["Type","Date","Details","Status"]} rows={(data.requests||[]).map(r=>[r.type,r.date,r.details,r.status])}/></section>
+    </div>
+    {isAdmin && <>
+      <div className="two-col">
+        <section className="panel"><PanelTitle title="Holiday Management"/>
+          <form className="form-grid compact-form" onSubmit={addHoliday}><label>Date<input type="date" value={holiday.date} onChange={e=>setHoliday({...holiday,date:e.target.value})} required/></label><label>Holiday Name<input value={holiday.name} onChange={e=>setHoliday({...holiday,name:e.target.value})} required/></label><label>Type<select value={holiday.type} onChange={e=>setHoliday({...holiday,type:e.target.value})}><option>PUBLIC</option><option>OPTIONAL</option><option>OFFICE</option></select></label><button className="primary"><Plus size={15}/> Add Holiday</button></form>
+          <div className="table-wrap"><table><thead><tr><th>Date</th><th>Name</th><th>Type</th><th></th></tr></thead><tbody>{(data.holidays||[]).map(h=><tr key={h.id}><td>{h.date}</td><td>{h.name}</td><td>{h.type}</td><td><button className="reject" onClick={()=>delHoliday(h.id)}><X size={14}/></button></td></tr>)}</tbody></table></div>
+        </section>
+        <section className="panel"><PanelTitle title="Weekoff Management"/><div className="form-grid compact-form"><label>Weekly Off Day<select value={weekoff} onChange={e=>setWeekoff(e.target.value)}>{weekDays.map((d,i)=><option key={i} value={i}>{d}</option>)}</select></label><button className="primary" onClick={saveWeekoff}><Check size={15}/> Save Weekoff</button></div><div className="assign-note">Weekoff aur holiday rules ko attendance reports mein future validation ke liye use kiya ja sakta hai.</div></section>
+      </div>
+      <section className="panel"><PanelTitle title="Pending Approvals"/><SimpleTable columns={["Employee","Employee Id","Type","Date","Details","Action"]} rows={(data.approvals||[]).map(r=>[r.employeeName,r.employeeId,r.type,r.date,r.details,<div className="table-actions"><button className="approve" onClick={()=>approve(r.id,"APPROVED")}><Check size={14}/></button><button className="reject" onClick={()=>approve(r.id,"REJECTED")}><X size={14}/></button></div>])}/></section>
+      <section className="panel"><PanelTitle title="Audit Log"/><SimpleTable columns={["Time","User","Action","Module","Details"]} rows={(data.audit||[]).map(r=>[r.time,r.username,r.action,r.module,r.details])}/></section>
+    </>}
+  </div>
+}
+
+function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.20</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
 function PanelTitle({title,action}){return <div className="panel-title"><h3>{title}</h3>{action}</div>}
