@@ -3,9 +3,10 @@ import { createRoot } from "react-dom/client";
 import {
   Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard,
   LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search,
-  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw
+  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import * as XLSX from "xlsx";
 import "./styles.css";
 
 // Office Task Report - Google Apps Script Web App
@@ -171,10 +172,63 @@ function Dashboard({session,notify}) {
 
 function Attendance({session,notify}) {
   const [data,setData]=useState(null); const [busy,setBusy]=useState(false);
+  const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null);
+  const fileRef=React.useRef(null);
+  const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const load=async()=>{setBusy(true);try{setData(await api("attendance",{session}))}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   useEffect(()=>{load()},[]);
   const punch=async(type)=>{try{await api("punch",{session,type});notify("success",`${type} time recorded.`);load()}catch(e){notify("error",e.message)}};
-  return <div><PageHead title="Attendance" subtitle="Track IN, OUT, breaks and office time." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button>}/>
+
+  const downloadFormat=(type)=>{
+    const headers=["employeeCode","date","in","out","officeMinutes","breakMinutes","status"];
+    const sample=[["12345","2026-10-01","09:30:00","18:00:00","510","30","PRESENT"]];
+    if(type==="csv"){
+      const csv=[headers.join(","),...sample.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");
+      const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const a=document.createElement("a");
+      a.href=url;a.download="Employee_Attendance_Import_Format.csv";a.click();URL.revokeObjectURL(url);return;
+    }
+    const ws=XLSX.utils.aoa_to_sheet([headers,...sample]); ws["!cols"]=[{wch:16},{wch:14},{wch:12},{wch:12},{wch:18},{wch:16},{wch:14}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Attendance"); XLSX.writeFile(wb,"Employee_Attendance_Import_Format.xlsx");
+  };
+
+  const importFile=async(e)=>{
+    const file=e.target.files?.[0]; if(!file)return;
+    setImportResult(null); setImportBusy(true);
+    try{
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:"array",cellDates:true});
+      const sheet=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
+      if(!rows.length)throw new Error("Excel/CSV file mein koi record nahi mila.");
+      const result=await api("importAttendance",{session,rows});
+      setImportResult(result);
+      notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete.`);
+      await load();
+    }catch(err){notify("error",err.message);setImportResult({errors:[err.message]});}
+    finally{
+      setImportBusy(false);
+      if(fileRef.current) fileRef.current.value="";
+    }
+  };
+
+  return <div>
+    <PageHead title="Attendance" subtitle="Track IN, OUT, breaks and office time."
+      action={<div className="top-actions-inline"><button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button></div>}/>
+
+    {isAdmin && <section className="panel attendance-import-panel">
+      <PanelTitle title="Employee Attendance Import" action={<span className="muted">Excel / CSV</span>}/>
+      <div className="import-toolbar">
+        <div className="import-help"><FileSpreadsheet size={20}/><div><b>Bulk Attendance Import</b><small>Existing attendance will not be overwritten. Only missing/pending fields are added.</small></div></div>
+        <div className="import-actions">
+          <button className="secondary" type="button" onClick={()=>downloadFormat("xlsx")}><Download size={15}/> Excel Format</button>
+          <button className="secondary" type="button" onClick={()=>downloadFormat("csv")}><Download size={15}/> CSV Format</button>
+          <label className="primary upload-btn"><Upload size={15}/> {importBusy?"Importing…":"Import Excel / CSV"}<input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={importFile} disabled={importBusy}/></label>
+        </div>
+      </div>
+      {importResult && <div className="import-summary"><b>Import Result:</b> Added {importResult.added||0} · Updated Pending {importResult.updated||0} · Skipped {importResult.skipped||0}{importResult.errors?.length?` · Errors ${importResult.errors.length}`:""}</div>}
+      {importResult?.errors?.length>0 && <div className="import-errors">{importResult.errors.slice(0,8).map((x,i)=><div key={i}>{x}</div>)}</div>}
+    </section>}
+
     <div className="attendance-hero panel">
       <div><span className="status-dot"/> Today</div>
       <div className="big-time">{data?.today?.in || "--:--"} <span>→</span> {data?.today?.out || "--:--"}</div>

@@ -34,3 +34,18 @@
 .period-note svg{color:#0f766e;flex:0 0 auto}
 @media(max-width:620px){.template-period{grid-template-columns:1fr 1fr}.period-arrow{display:none}}
 .compact-form{gap:10px}.assign-note{display:flex;align-items:center;gap:7px;background:#f0faf8;border:1px solid #d8eee9;color:#52716d;border-radius:10px;padding:10px 12px;font-size:11px}.section-divider{height:1px;background:var(--border);margin:20px 0}.location-heading{font-size:12px;font-weight:800;color:#0f766e;background:#f0faf8;border:1px solid #d8eee9;border-radius:10px;padding:10px 12px}.form-grid .location-heading{grid-column:1/-1}
+
+/* V.18 Attendance Import */
+.top-actions-inline{display:flex;align-items:center;gap:8px}
+.attendance-import-panel{margin-bottom:18px}
+.import-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.import-help{display:flex;align-items:center;gap:10px;color:#0f766e}
+.import-help div{display:flex;flex-direction:column;gap:3px}
+.import-help b{color:#16324f;font-size:13px}
+.import-help small{color:#73838b;font-size:11px}
+.import-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.upload-btn{position:relative;overflow:hidden;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.upload-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.import-summary{margin-top:13px;padding:10px 12px;border:1px solid #d8eee9;background:#f0faf8;border-radius:10px;color:#426761;font-size:12px}
+.import-errors{margin-top:9px;padding:9px 12px;border-radius:10px;background:#fff7f7;border:1px solid #f0d6d6;color:#a34747;font-size:11px;max-height:120px;overflow:auto}
+@media(max-width:720px){.import-actions{width:100%}.import-actions button,.import-actions .upload-btn{flex:1;justify-content:center}.import-help{width:100%}}
