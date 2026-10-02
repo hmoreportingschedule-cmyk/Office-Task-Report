@@ -180,7 +180,8 @@ function ensureBackend_() {
     AuditLog:['time','username','action','module','details'],
     Holidays:['id','date','name','type','createdBy','createdAt'],
     SystemSettings:['key','value','updatedAt'],
-    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']
+    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt'],
+    AttendanceRoster:['employeeId','username','date','officeInTime','officeOutTime','weekoffDay','updatedAt']
   };
 
   // 5) Automatically create all support sheets.
@@ -373,6 +374,7 @@ function route_(action,b) {
     case 'runAutomation': return runAutomation_(b.session);
     case 'installAutomation': return installAutomation_(b.session);
     case 'profile': return profile_(b.session);
+    case 'employeeProfile': return employeeProfile_(b.session,b.username);
     case 'changePassword': return changePassword_(b.session,b.currentPassword,b.newPassword);
     case 'uploadProfilePhoto': return uploadProfilePhoto_(b.session,b.fileName,b.dataUrl,b.mimeType);
     case 'advanced': return advanced_(b.session);
@@ -575,12 +577,14 @@ function attendance_(s) {
   const dates=[todayStr,yesterdayStr];
   const editableDates=dates.map(function(d){return {date:d,label:d===todayStr?'Today': 'Yesterday',nonWorking:isNonWorkingDate_(d,rules),reason:rules.reasonMap[d]||''};});
   const office=employeeSettings_(user);
+  const rosterToday=getAttendanceRoster_(user,todayStr);
+  const rosterYesterday=getAttendanceRoster_(user,yesterdayStr);
   const normalizedRows=rows.map(function(r){return Object.assign({},r,{date:normalizeAttendanceDate_(r.date)||String(r.date||'')});});
   return {
     today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:t.officeMinutes||0,breakMinutes:t.breakMinutes||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
     rows:normalizedRows.slice(-30).reverse(),
     editableDates:editableDates,
-    settings:{officeInTime:office.officeInTime||'',officeOutTime:office.officeOutTime||'',weekoffLabel:weekDayName_(rules.weekoff)}
+    settings:{officeInTime:(rosterToday&&rosterToday.officeInTime)||office.officeInTime||'',officeOutTime:(rosterToday&&rosterToday.officeOutTime)||office.officeOutTime||'',weekoffLabel:weekDayName_(rules.weekoff),roster:{today:rosterToday||null,yesterday:rosterYesterday||null}}
   };
 }
 
@@ -1048,9 +1052,7 @@ function approvalAction_(s,id,status) {
     if(u){
       const f=getEmployeeFile_(u), sh=f.getSheetByName('Requests'); try{updateByKey_(sh,'id',item.requestId,{status:status});}catch(e){}
       if(String(status)==='APPROVED' && String(item.type)==='Time Adjustment' && item.adjustmentField && item.adjustmentTime){
-        const es=master_().getSheetByName('EmployeeSettings'); ensureHeaderColumns_(es,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
-        const current=employeeSettings_(u); const patch={}; if(String(item.adjustmentField)==='IN') patch.officeInTime=String(item.adjustmentTime); else patch.officeOutTime=String(item.adjustmentTime); patch.updatedAt=new Date();
-        const existing=readRows_(es).find(function(r){return String(r.employeeId)===String(u.employeeId);}); if(existing) updateByKey_(es,'employeeId',u.employeeId,patch); else saveEmployeeSettings_(u,{officeCity:current.officeCity,officeAddress:current.officeAddress,officeInTime:patch.officeInTime||current.officeInTime,officeOutTime:patch.officeOutTime||current.officeOutTime,weekoffDay:current.weekoffDay});
+        saveAttendanceRoster_(u,item.date,item.adjustmentField,item.adjustmentTime);
       }
     }
   }
@@ -1248,6 +1250,64 @@ function notifyUsers_(usernames,title,message,type){
   list.forEach(function(username){
     appendObject_(sh,{id:Utilities.getUuid(),username:username,title:String(title||''),message:String(message||''),type:type||'INFO',time:new Date(),read:'N'});
   });
+}
+
+function employeeProfile_(s,username){
+  assertAdmin_(s);
+  const u=findUser_(username); if(!u) throw new Error('Employee not found.');
+  const st=employeeSettings_(u);
+  let photoUrl='';
+  try{ const r=readRows_(master_().getSheetByName('EmployeeSettings')).find(x=>String(x.employeeId)===String(u.employeeId)); photoUrl=r&&r.photoUrl||''; }catch(e){}
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:photoUrl}};
+}
+
+function weekDayName_(day){
+  const names=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const n=Number(day); return Number.isInteger(n)&&n>=0&&n<=6 ? names[n] : '';
+}
+
+function getAttendanceRoster_(user,date){
+  const sh=master_().getSheetByName('AttendanceRoster'); if(!sh||!user||!user.employeeId||!date) return null;
+  const row=readRows_(sh).find(function(r){return String(r.employeeId)===String(user.employeeId)&&normalizeAttendanceDate_(r.date)===String(date);});
+  return row||null;
+}
+
+function saveAttendanceRoster_(user,date,field,time){
+  if(!user||!user.employeeId||!date||!normalizeTime_(time)) throw new Error('Roster details invalid.');
+  const sh=master_().getSheetByName('AttendanceRoster');
+  ensureHeaderColumns_(sh,['employeeId','username','date','officeInTime','officeOutTime','weekoffDay','updatedAt']);
+  const current=getAttendanceRoster_(user,date)||{};
+  const base=employeeSettings_(user);
+  const obj={employeeId:user.employeeId,username:user.username,date:date,officeInTime:current.officeInTime||base.officeInTime||'',officeOutTime:current.officeOutTime||base.officeOutTime||'',weekoffDay:current.weekoffDay!==undefined&&current.weekoffDay!==''?String(current.weekoffDay):String(base.weekoffDay||''),updatedAt:new Date()};
+  if(String(field)==='IN') obj.officeInTime=normalizeTime_(time); else if(String(field)==='OUT') obj.officeOutTime=normalizeTime_(time); else throw new Error('Roster adjustment field invalid.');
+  const rows=readRows_(sh), existingIndex=rows.findIndex(function(r){return String(r.employeeId)===String(user.employeeId)&&normalizeAttendanceDate_(r.date)===String(date);});
+  if(existingIndex>=0){
+    const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
+    const rowNo=existingIndex+2;
+    headers.forEach(function(h,i){ if(Object.prototype.hasOwnProperty.call(obj,h)) sh.getRange(rowNo,i+1).setValue(obj[h]); });
+  } else appendObject_(sh,obj);
+}
+
+function getAttendanceRules_(user){
+  const globalRows=readRows_(master_().getSheetByName('SystemSettings')), gs={}; globalRows.forEach(function(r){gs[r.key]=r.value;});
+  const st=employeeSettings_(user);
+  const rosterToday=getAttendanceRoster_(user,Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'));
+  const weekoff=rosterToday&&rosterToday.weekoffDay!==''?rosterToday.weekoffDay:(st.weekoffDay!==''?st.weekoffDay:(gs.WEEKOFF_DAY||'0'));
+  const reasonMap={};
+  const h=master_().getSheetByName('Holidays');
+  if(h) readRows_(h).forEach(function(r){const d=normalizeAttendanceDate_(r.date); if(d) reasonMap[d]='Holiday: '+String(r.name||'Holiday');});
+  try{
+    const file=getEmployeeFile_(user), req=file.getSheetByName('Requests');
+    if(req) readRows_(req).forEach(function(r){if(String(r.status)!=='APPROVED') return; const d=normalizeAttendanceDate_(r.date); if(!d)return; if(['Leave','Weekoff Adjustment'].includes(String(r.type))) reasonMap[d]=String(r.type);});
+  }catch(e){}
+  return {weekoff:String(weekoff),reasonMap:reasonMap};
+}
+
+function isNonWorkingDate_(date,rules){
+  const d=normalizeAttendanceDate_(date); if(!d) return false;
+  if(rules&&rules.reasonMap&&rules.reasonMap[d]) return true;
+  const dt=new Date(d+'T00:00:00');
+  return !isNaN(dt.getTime()) && dt.getDay()===Number(rules&&rules.weekoff!==undefined?rules.weekoff:0);
 }
 
 function profile_(s){

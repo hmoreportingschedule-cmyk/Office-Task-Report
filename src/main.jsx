@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.51
+// Office Task Report V.52
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -149,7 +149,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.51</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.52</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -164,7 +164,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
 function Topbar({session,onMenu,onLogout}) {
   const [now,setNow]=useState(new Date()); const [count,setCount]=useState(0);
   useEffect(()=>{const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t)},[]);
-  useEffect(()=>{let mounted=true; const load=async()=>{try{const r=await api("notifications",{session}); if(mounted)setCount((r.rows||[]).filter(x=>String(x.read||"N")!=="Y").length)}catch(e){}}; load(); const t=setInterval(load,10000); return()=>{mounted=false;clearInterval(t)}},[session.username]);
+  useEffect(()=>{let mounted=true; const load=async()=>{try{const r=await api("notifications",{session}); if(mounted)setCount((r.rows||[]).filter(x=>String(x.read||"N")!=="Y").length)}catch(e){}}; load(); const t=setInterval(load,5000); return()=>{mounted=false;clearInterval(t)}},[session.username]);
   return <header className="topbar">
     <button className="icon-btn mobile-menu" onClick={onMenu}><Menu/></button>
     <div><div className="top-title">Good day, {session.name.split(" ")[0]}</div><div className="top-date">{now.toLocaleDateString("en-IN",{weekday:"long",day:"2-digit",month:"short",year:"numeric"})} · {now.toLocaleTimeString("en-IN")}</div></div>
@@ -282,9 +282,7 @@ function Attendance({session,notify}) {
       <PanelTitle title="Manual Attendance" action={<span className="muted">No future date</span>}/>
       <div className="form-grid compact-form">
         <label>Attendance Date
-          <select value={attendanceDate} onChange={e=>selectDate(e.target.value)} disabled={busy}>
-            {(data?.editableDates||[]).map(x=><option key={x.date} value={x.date}>{x.label}</option>)}
-          </select>
+          <input type="date" value={attendanceDate} min={data?.editableDates?.[data?.editableDates?.length-1]?.date||""} max={data?.editableDates?.[0]?.date||""} onChange={e=>selectDate(e.target.value)} disabled={busy} required/>
         </label>
         <label>IN Time
           <input type="time" value={inTime} onChange={e=>setInTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
@@ -478,13 +476,14 @@ function Templates({session,notify}) {
 
 function Employees({session,notify}) {
   const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",officeInTime:"",officeOutTime:"",weekoffDay:"",country:"",region:"",state:"",division:"",district:""};
-  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false);
+  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false); const [profile,setProfile]=useState(null);
   const weekDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const load=async()=>{try{const r=await api("employees",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
   const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
   const reset=()=>{setForm(empty);setEditing(false)};
   const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const viewProfile=async(r)=>{try{const x=await api("employeeProfile",{session,username:r.username});setProfile(x.profile)}catch(e){notify("error",e.message)}};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
   return <div>
     <PageHead title="User Create" subtitle="Employee Id ke saath office timing aur weekoff bhi Admin set/edit kar sakta hai." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
@@ -520,8 +519,9 @@ function Employees({session,notify}) {
         <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
         <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update User</> : <><Plus size={16}/> User Create</>}</button>
       </form>
-      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Office City</th><th>Office In</th><th>Office Out</th><th>Weekoff</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.office}</td><td>{r.officeInTime||"-"}</td><td>{r.officeOutTime||"-"}</td><td>{r.weekoffLabel||"Default"}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit User" onClick={()=>edit(r)}><Pencil size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
+      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Office City</th><th>Office In</th><th>Office Out</th><th>Weekoff</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td><button className="link-button" onClick={()=>viewProfile(r)} title="View Employee Profile">{r.code}</button></td><td>{r.username}</td><td>{r.office}</td><td>{r.officeInTime||"-"}</td><td>{r.officeOutTime||"-"}</td><td>{r.weekoffLabel||"Default"}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="View Profile" onClick={()=>viewProfile(r)}><UserCircle2 size={14}/></button><button className="approve" title="Edit User" onClick={()=>edit(r)}><Pencil size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
     </div>
+    {profile && <div className="modal-backdrop" onClick={()=>setProfile(null)}><div className="profile-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>Employee Profile</h3><p>{profile.name}</p></div><button className="icon-btn" onClick={()=>setProfile(null)}><X size={18}/></button></div><div className="profile-head"><div className="profile-photo">{profile.photoUrl?<img src={profile.photoUrl} alt="Profile"/>:<UserCircle2 size={72}/>}</div><div><h2>{profile.name}</h2><p>{profile.designation||profile.role}</p><span className="tag">Employee ID: {profile.employeeId||"-"}</span></div></div><div className="profile-grid"><div><span>Office City</span><b>{profile.officeCity||"-"}</b></div><div><span>Office Address</span><b>{profile.officeAddress||"-"}</b></div><div><span>Office Time</span><b>{profile.officeInTime&&profile.officeOutTime?`${formatTime(profile.officeInTime)} To ${formatTime(profile.officeOutTime)}`:"-"}</b></div><div><span>Weekoff</span><b>{profile.weekoffLabel||"-"}</b></div><div><span>Department</span><b>{profile.department||"-"}</b></div><div><span>Contact</span><b>{profile.phone||"-"}</b></div></div></div></div>}
   </div>
 }
 
@@ -548,7 +548,7 @@ function Reports({session,notify}) {
 
 function Notifications({session,notify}) {
   const [rows,setRows]=useState([]);
-  useEffect(()=>{const load=()=>api("notifications",{session}).then(r=>setRows(r.rows||[])).catch(e=>notify("error",e.message)); load(); const t=setInterval(load,10000); const open=()=>load(); window.addEventListener("open-notifications",open); return()=>{clearInterval(t);window.removeEventListener("open-notifications",open)}},[session.username]);
+  useEffect(()=>{const load=()=>api("notifications",{session}).then(r=>setRows(r.rows||[])).catch(e=>notify("error",e.message)); load(); const t=setInterval(load,5000); const open=()=>load(); window.addEventListener("open-notifications",open); return()=>{clearInterval(t);window.removeEventListener("open-notifications",open)}},[session.username]);
   const markRead=async()=>{try{await api("markNotificationsRead",{session});setRows(rows.map(x=>({...x,read:"Y"})))}catch(e){notify("error",e.message)}};
   return <div><PageHead title="Notifications" subtitle="Reminders, approvals and system alerts." action={<button className="secondary" onClick={markRead}><Check size={15}/> Mark all read</button>}/><section className="panel">{rows.length?rows.map((n,i)=><div className="notice" key={i}><div className="notice-icon"><Bell size={17}/></div><div><b>{n.title}</b><p>{n.message}</p><small>{n.time}</small></div></div>):<Empty text="No new notifications."/>}</section></div>
 }
@@ -608,7 +608,7 @@ function SettingsPage({session,notify}){
   useEffect(()=>{load()},[]);
   const install=async()=>{setBusy(true);try{await api("installAutomation",{session});notify("success","Hourly automation enabled.");load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const run=async()=>{setBusy(true);try{const r=await api("runAutomation",{session});notify("success",`Automation run: ${r.reminders||0} reminders, ${r.approvals||0} approvals.`);load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
-  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.51</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
+  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.52</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
 }
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
