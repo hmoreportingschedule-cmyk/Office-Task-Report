@@ -6,21 +6,23 @@ import {
   UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound, StickyNote
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import * as XLSX_LIBRARY from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.74
+// Office Task Report V.78
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
 // serverless proxy instead.
 const API_URL = "/api/office-task";
 
-let XLSX_MODULE=null;
+
+// V.78: keep XLSX loading syntax completely static for Cloudflare/Vite/esbuild.
+// This removes the dynamic-import declaration pattern that caused the production
+// build to fail when an older source copy was picked up by the build service.
+const XLSX_MODULE = XLSX_LIBRARY;
+
 async function getXLSX(){
-  if(!XLSX_MODULE){
-    const mod=await import("xlsx");
-    XLSX_MODULE=mod.default||mod;
-  }
   return XLSX_MODULE;
 }
 
@@ -39,10 +41,13 @@ async function api(action, payload = {}) {
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Backend ne JSON response nahi diya. Apps Script Web App deployment/access check karein."); }
+    catch {
+      throw new Error(`Backend non-JSON response (${res.status}). Apps Script deployment/access check karein.`);
+    }
 
     if (!res.ok || !data.ok) {
-      throw new Error(data.message || `Backend request failed (${res.status}).`);
+      const extra = data.detail ? ` | ${String(data.detail).slice(0, 300)}` : "";
+      throw new Error((data.message || `Backend request failed (${res.status}).`) + extra);
     }
     return data;
   } catch (e) {
