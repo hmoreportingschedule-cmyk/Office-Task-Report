@@ -15,12 +15,13 @@ import "./styles.css";
 // serverless proxy instead.
 const API_URL = "/api/office-task";
 
-let XLSX_MODULE=null;
+let XLSX_MODULE = null;
 async function getXLSX(){
-  if(!XLSX_MODULE){
-    const mod=await import("xlsx");
-    XLSX_MODULE=mod.default||mod;
-  }
+  // Keep the declaration outside the conditional statement so every Vite/esbuild
+  // transform target parses this helper consistently.
+  if (XLSX_MODULE) return XLSX_MODULE;
+  const mod = await import("xlsx");
+  XLSX_MODULE = mod.default || mod;
   return XLSX_MODULE;
 }
 
@@ -39,10 +40,13 @@ async function api(action, payload = {}) {
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
-    catch { throw new Error("Backend ne JSON response nahi diya. Apps Script Web App deployment/access check karein."); }
+    catch {
+      throw new Error(`Backend non-JSON response (${res.status}). Apps Script deployment/access check karein.`);
+    }
 
     if (!res.ok || !data.ok) {
-      throw new Error(data.message || `Backend request failed (${res.status}).`);
+      const extra = data.detail ? ` | ${String(data.detail).slice(0, 300)}` : "";
+      throw new Error((data.message || `Backend request failed (${res.status}).`) + extra);
     }
     return data;
   } catch (e) {
