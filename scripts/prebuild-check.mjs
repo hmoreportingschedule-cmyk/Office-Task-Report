@@ -55,6 +55,6 @@ if(!code.includes('function formatAttendanceDate_')) throw new Error('Attendance
 if(!/function assignTask_[\s\S]*?getEmployeeFile_\(user,taskYear\)/.test(code)) throw new Error('assignTask_ must resolve the employee yearly file from the task date/year.');
 if(!/if\(due<date\) throw new Error/.test(code)) throw new Error('assignTask_ must reject a To Date earlier than From Date.');
 if(!code.includes('const existingEmail=')) throw new Error('Profile email preservation guard missing.');
-if(!/V\.87/.test(code)||!/V\.87/.test(worker)||!/V\.87/.test(main)) throw new Error('V.87 version markers are inconsistent.');
-if(/V\.(?:7[0-9]|8[0-6])/.test(code+'\n'+worker+'\n'+main)) throw new Error('Stale production version marker found in source.');
+if(!/V\.88/.test(code)||!/V\.88/.test(worker)||!/V\.88/.test(main)) throw new Error('V.88 version markers are inconsistent.');
+if(/V\.(?:7[0-9]|8[0-7])/.test(code+'\n'+worker+'\n'+main)) throw new Error('Stale production version marker found in source.');
 console.log(`Prebuild check passed: ${new Set(frontend).size} frontend API actions match Code.gs; Cloudflare, build, version and regression checks passed.`);

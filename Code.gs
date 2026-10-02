@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.87
+ * OFFICE TASK REPORT V.88
  * Google Apps Script backend
  *
  * Architecture:
@@ -26,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.87',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.88',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.87',
+      version:'V.88',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.87',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.88',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 

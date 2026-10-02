@@ -1,12 +1,25 @@
+const WORKER_VERSION = "V.88";
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyfL_lBPCkUlHzvv0iWvbUyNmhjSE7dVh6yqHp0L4E9JAs8S6e9jDx3v2dKku3ClK6M/exec";
 const UPSTREAM_TIMEOUT_MS = 30000;
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/api/office-task" && request.method === "GET" && url.searchParams.get("health") === "1") {
+      try {
+        const upstream = await fetchAppsScriptHealth_();
+        const text = await upstream.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) {
+          return json({ok:false,app:"Office Task Report",worker:WORKER_VERSION,message:"Apps Script health response is not JSON.",status:upstream.status,detail:String(text||"").replace(/\s+/g," ").slice(0,500)},502);
+        }
+        return json({ok:true,app:"Office Task Report",worker:WORKER_VERSION,proxy:true,appsScript:data});
+      } catch(e) {
+        return json({ok:false,app:"Office Task Report",worker:WORKER_VERSION,message:"Apps Script health check failed.",detail:String(e?.message||e)},502);
+      }
+    }
     if (url.pathname === "/api/office-task") {
       if (request.method === "OPTIONS") return new Response(null,{status:204,headers:corsHeaders()});
-      if (request.method === "GET" && url.searchParams.get("health") === "1") return json({ok:true,app:"Office Task Report",worker:"V.87",proxy:true,appsScript:APPS_SCRIPT_URL});
       if (request.method !== "POST") return json({ok:false,message:"Method not allowed. Use POST."},405);
       try {
         const body=await request.text();
@@ -24,6 +37,18 @@ export default {
     return env.ASSETS.fetch(request);
   }
 };
+
+async function fetchAppsScriptHealth_() {
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),10000);
+  try {
+    const target=APPS_SCRIPT_URL+(APPS_SCRIPT_URL.includes("?")?"&":"?")+"action=health";
+    return await fetch(target,{method:"GET",headers:{"Accept":"application/json,text/plain,*/*"},redirect:"follow",signal:controller.signal,cache:"no-store"});
+  } catch(e) {
+    if(controller.signal.aborted) throw new Error("Apps Script health check timed out after 10 seconds.");
+    throw e;
+  } finally { clearTimeout(timer); }
+}
 
 async function fetchAppsScript_(body) {
   const controller=new AbortController();

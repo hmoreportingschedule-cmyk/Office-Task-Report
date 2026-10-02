@@ -82,3 +82,9 @@
 @media(max-width:620px){.task-filter-bar{width:100%}.task-filter-bar select{flex:1;min-width:0}.task-filter-bar .search{width:100%}}
 
 .break-card{display:grid;grid-template-columns:minmax(180px,1.1fr) minmax(150px,1fr) minmax(150px,1fr);gap:14px;align-items:end;padding:14px 0;border-top:1px solid #e5e7eb}.break-card:first-of-type{border-top:0}.break-card .break-title{font-weight:700;align-self:center}.break-frozen{opacity:.65}.ramadan-freeze-control{margin-top:10px}.inline-check{display:flex;align-items:center;gap:8px;font-weight:600}.inline-check input{width:18px;height:18px}@media(max-width:760px){.break-card{grid-template-columns:1fr 1fr}.break-card .break-title{grid-column:1/-1}}
+
+/* V.88 approval toolbar: keep full-size Approve All inside panel */
+.approval-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;min-width:0}
+.approval-actions .approval-all-btn{width:auto;min-width:112px;height:38px;padding:0 12px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;font-size:12px;font-weight:800}
+.approval-actions .primary,.approval-actions .secondary{white-space:nowrap}
+@media(max-width:760px){.panel-title{align-items:flex-start;gap:10px;flex-wrap:wrap}.approval-actions{width:100%;justify-content:flex-start}.approval-actions .approval-all-btn{min-width:110px}}
