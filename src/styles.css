@@ -49,3 +49,15 @@
 .import-summary{margin-top:13px;padding:10px 12px;border:1px solid #d8eee9;background:#f0faf8;border-radius:10px;color:#426761;font-size:12px}
 .import-errors{margin-top:9px;padding:9px 12px;border-radius:10px;background:#fff7f7;border:1px solid #f0d6d6;color:#a34747;font-size:11px;max-height:120px;overflow:auto}
 @media(max-width:720px){.import-actions{width:100%}.import-actions button,.import-actions .upload-btn{flex:1;justify-content:center}.import-help{width:100%}}
+
+/* V.39 profile + fast notification UI */
+.profile-card .profile-head{display:flex;align-items:center;gap:18px;margin-bottom:22px}
+.profile-photo{width:88px;height:88px;border-radius:50%;border:1px solid var(--border,#dfe7e5);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;background:#f3f7f6}
+.profile-photo img{width:100%;height:100%;object-fit:cover}
+.photo-upload{position:absolute;right:0;bottom:0;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#0f766e;color:#fff;cursor:pointer;border:2px solid #fff}
+.photo-upload input{display:none}
+.profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.profile-grid>div{padding:14px;border:1px solid var(--border,#e2e8e6);border-radius:12px;background:#fbfdfc;display:flex;flex-direction:column;gap:5px}
+.profile-grid span{font-size:12px;color:#71807c}.profile-grid b{font-size:14px;color:#20302c}
+.notif-btn{position:relative}.notif-badge{position:absolute;top:-4px;right:-4px;min-width:17px;height:17px;padding:0 4px;border-radius:10px;background:#dc2626;color:#fff;font-size:10px;line-height:17px;text-align:center;font-weight:700}
+@media(max-width:700px){.profile-grid{grid-template-columns:1fr}.profile-card .profile-head{align-items:flex-start}}

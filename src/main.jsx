@@ -3,13 +3,13 @@ import { createRoot } from "react-dom/client";
 import {
   Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard, ClipboardCheck,
   LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search, Pencil,
-  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet
+  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.38
+// Office Task Report V.39
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -65,6 +65,7 @@ function App() {
     localStorage.removeItem("otr_session");
     setSession(null);
   };
+  useEffect(()=>{const open=()=>setView("notifications");window.addEventListener("open-notifications",open);return()=>window.removeEventListener("open-notifications",open)},[]);
 
   if (!session) {
     return <Login onLogin={(s) => {
@@ -88,6 +89,7 @@ function App() {
           {view === "reports" && <Reports session={session} notify={notify} />}
           {view === "notifications" && <Notifications session={session} notify={notify} />}
           {view === "requests" && <RequestsCenter session={session} notify={notify} />}
+          {view === "profile" && <Profile session={session} notify={notify} />}
           {view === "settings" && <SettingsPage session={session} notify={notify} />}
         </div>
       </main>
@@ -142,11 +144,12 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
     ["reports", "Progress Reports", CalendarDays],
     ["notifications", "Notifications", Bell],
     ["requests", "Requests & Advanced", ClipboardCheck],
+    ["profile", "My Profile", UserCircle2],
     ["settings", "Settings", Settings],
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.38</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.39</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -159,12 +162,13 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
 }
 
 function Topbar({session,onMenu,onLogout}) {
-  const [now,setNow]=useState(new Date());
-  useEffect(()=>{const t=setInterval(()=>setNow(new Date()),1000);return()=>clearInterval(t)},[]);
+  const [now,setNow]=useState(new Date()); const [count,setCount]=useState(0);
+  useEffect(()=>{const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t)},[]);
+  useEffect(()=>{let mounted=true; const load=async()=>{try{const r=await api("notifications",{session}); if(mounted)setCount((r.rows||[]).filter(x=>String(x.read||"N")!=="Y").length)}catch(e){}}; load(); const t=setInterval(load,10000); return()=>{mounted=false;clearInterval(t)}},[session.username]);
   return <header className="topbar">
     <button className="icon-btn mobile-menu" onClick={onMenu}><Menu/></button>
     <div><div className="top-title">Good day, {session.name.split(" ")[0]}</div><div className="top-date">{now.toLocaleDateString("en-IN",{weekday:"long",day:"2-digit",month:"short",year:"numeric"})} · {now.toLocaleTimeString("en-IN")}</div></div>
-    <div className="top-actions"><div className="live-pill"><span/> Live</div><button className="icon-btn"><Bell size={19}/></button><button className="avatar sm" onClick={onLogout}>{session.name.slice(0,1).toUpperCase()}</button></div>
+    <div className="top-actions"><div className="live-pill"><span/> Live</div><button className="icon-btn notif-btn" onClick={()=>window.dispatchEvent(new CustomEvent("open-notifications"))}><Bell size={19}/>{count>0&&<span className="notif-badge">{count>99?"99+":count}</span>}</button><button className="avatar sm" onClick={onLogout}>{session.name.slice(0,1).toUpperCase()}</button></div>
   </header>
 }
 
@@ -297,6 +301,22 @@ function Attendance({session,notify}) {
     <section className="panel"><PanelTitle title="Recent Attendance"/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status])}/>}</section>
   </div>
 }
+
+function Profile({session,notify}) {
+  const [data,setData]=useState(null); const [busy,setBusy]=useState(true); const [pwd,setPwd]=useState({currentPassword:"",newPassword:"",confirm:""}); const [photo,setPhoto]=useState(false);
+  const load=async()=>{setBusy(true);try{const r=await api("profile",{session});setData(r.profile)}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  useEffect(()=>{load()},[]);
+  const changePassword=async(e)=>{e.preventDefault();if(pwd.newPassword!==pwd.confirm){notify("error","New password aur confirm password same hona chahiye.");return}try{await api("changePassword",{session,currentPassword:pwd.currentPassword,newPassword:pwd.newPassword});notify("success","Password successfully change ho gaya.");setPwd({currentPassword:"",newPassword:"",confirm:""})}catch(e){notify("error",e.message)}};
+  const upload=async(e)=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");return}if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");return}const reader=new FileReader();reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,fileName:f.name,dataUrl:reader.result,mimeType:f.type});setData(d=>({...d,photoUrl:r.photoUrl}));notify("success","Profile photo update ho gayi.")}catch(e){notify("error",e.message)}};reader.readAsDataURL(f)};
+  if(busy&&!data)return <Loader text="Loading profile…"/>;
+  return <div><PageHead title="My Profile" subtitle="Apni profile details aur password manage karein." action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/>
+    <div className="two-col">
+      <section className="panel profile-card"><PanelTitle title="Employee Profile"/><div className="profile-head"><div className="profile-photo">{data?.photoUrl?<img src={data.photoUrl} alt="Profile"/>:<UserCircle2 size={72}/>}<label className="photo-upload"><Camera size={14}/><input type="file" accept="image/*" onChange={upload}/></label></div><div><h2>{data?.name||session.name}</h2><p>{data?.designation||session.role}</p><span className="tag">Employee ID: {data?.employeeId||session.employeeId||session.code||"-"}</span></div></div>
+      <div className="profile-grid"><div><span>Office City</span><b>{data?.officeCity||"-"}</b></div><div><span>Office Address</span><b>{data?.officeAddress||"-"}</b></div><div><span>Office Time</span><b>{data?.officeInTime&&data?.officeOutTime?`${formatTime(data.officeInTime)} To ${formatTime(data.officeOutTime)}`:"-"}</b></div><div><span>Weekoff</span><b>{data?.weekoffLabel||"-"}</b></div><div><span>Department</span><b>{data?.department||"-"}</b></div><div><span>Contact</span><b>{data?.phone||"-"}</b></div></div></section>
+      <section className="panel"><PanelTitle title="Change Password"/><form className="form-grid" onSubmit={changePassword}><label>Current Password<input type="password" value={pwd.currentPassword} onChange={e=>setPwd({...pwd,currentPassword:e.target.value})} required/></label><label>New Password<input type="password" value={pwd.newPassword} onChange={e=>setPwd({...pwd,newPassword:e.target.value})} minLength={4} required/></label><label>Confirm New Password<input type="password" value={pwd.confirm} onChange={e=>setPwd({...pwd,confirm:e.target.value})} minLength={4} required/></label><button className="primary full-span"><KeyRound size={16}/> Change Password</button></form></section>
+    </div></div>
+}
+function formatTime(v){const s=String(v||"").slice(0,5);if(!/^\d{2}:\d{2}$/.test(s))return v||"-";let [h,m]=s.split(":").map(Number);const ap=h>=12?"PM":"AM";h=h%12||12;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`}
 
 function Tasks({session,notify}) {
   const [rows,setRows]=useState([]); const [busy,setBusy]=useState(true); const [search,setSearch]=useState("");
@@ -507,7 +527,7 @@ function Reports({session,notify}) {
 
 function Notifications({session,notify}) {
   const [rows,setRows]=useState([]);
-  useEffect(()=>{api("notifications",{session}).then(r=>setRows(r.rows||[])).catch(e=>notify("error",e.message))},[]);
+  useEffect(()=>{const load=()=>api("notifications",{session}).then(r=>setRows(r.rows||[])).catch(e=>notify("error",e.message)); load(); const t=setInterval(load,10000); const open=()=>load(); window.addEventListener("open-notifications",open); return()=>{clearInterval(t);window.removeEventListener("open-notifications",open)}},[session.username]);
   return <div><PageHead title="Notifications" subtitle="Reminders, approvals and system alerts."/><section className="panel">{rows.length?rows.map((n,i)=><div className="notice" key={i}><div className="notice-icon"><Bell size={17}/></div><div><b>{n.title}</b><p>{n.message}</p><small>{n.time}</small></div></div>):<Empty text="No new notifications."/>}</section></div>
 }
 
@@ -515,15 +535,15 @@ function RequestsCenter({session,notify}) {
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const canRequest=Boolean(session.code || session.employeeId);
   const [data,setData]=useState({requests:[],holidays:[],approvals:[],weekoff:"0"});
-  const [form,setForm]=useState({type:"Leave",date:"",details:""});
+  const [form,setForm]=useState({type:"Leave",date:"",details:"",adjustmentField:"IN",adjustmentTime:"",meetingMode:"Online",startTime:"",endTime:""});
   const [holiday,setHoliday]=useState({date:"",name:"",type:"PUBLIC"});
   const [weekoff,setWeekoff]=useState("0");
   const [busy,setBusy]=useState(false);
-  const requestTypes=["Leave","Attendance Correction","Day Adjustment","Time Adjustment","Meeting","Meeting Journey","3 Days Qafila","Tarbiyati Ijtima","Others"];
+  const requestTypes=["Leave","Attendance Correction","Weekoff Adjustment","Time Adjustment","Meeting","Meeting Journey","3 Days Qafila","Tarbiyati Ijtima","Others"];
   const weekDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const load=async()=>{try{const r=await api("advanced",{session});setData(r);setWeekoff(String(r.weekoff||"0"))}catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
-  const submitRequest=async(e)=>{e.preventDefault();setBusy(true);try{await api("createRequest",{session,request:form});notify("success","Request submit ho gayi. Approval ke liye bhej di gayi.");setForm({type:"Leave",date:"",details:""});load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const submitRequest=async(e)=>{e.preventDefault();setBusy(true);try{await api("createRequest",{session,request:form});notify("success","Request submit ho gayi. Approval ke liye bhej di gayi.");setForm({type:"Leave",date:"",details:"",adjustmentField:"IN",adjustmentTime:"",meetingMode:"Online",startTime:"",endTime:""});load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const addHoliday=async(e)=>{e.preventDefault();try{await api("createHoliday",{session,holiday});notify("success","Holiday add ho gayi.");setHoliday({date:"",name:"",type:"PUBLIC"});load()}catch(e){notify("error",e.message)}};
   const delHoliday=async(id)=>{if(!window.confirm("Is holiday ko delete karna hai?"))return;try{await api("deleteHoliday",{session,id});notify("success","Holiday delete ho gayi.");load()}catch(e){notify("error",e.message)}};
   const saveWeekoff=async()=>{try{await api("saveWeekoff",{session,day:weekoff});notify("success","Weekoff setting save ho gayi.")}catch(e){notify("error",e.message)}};
@@ -535,8 +555,11 @@ function RequestsCenter({session,notify}) {
       <section className="panel"><PanelTitle title="Create Request"/>
         {!canRequest && <div className="assign-note">Master Admin account ke liye personal request ki zarurat nahi hai. Employee/HOD accounts yahan request submit kar sakte hain.</div>}
         <form className="form-grid" onSubmit={submitRequest}>
-          <label>Request Type<select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>{requestTypes.map(x=><option key={x}>{x}</option>)}</select></label>
-          <label>Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/></label>
+          <label>Request Type<select value={form.type} onChange={e=>setForm({...form,type:e.target.value,adjustmentField:"IN",adjustmentTime:"",meetingMode:"Online",startTime:"",endTime:""})}>{requestTypes.map(x=><option key={x}>{x}</option>)}</select></label>
+          <label>Attendance Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/></label>
+          {form.type==="Time Adjustment" && <><label>Adjustment<select value={form.adjustmentField} onChange={e=>setForm({...form,adjustmentField:e.target.value})}><option value="IN">In Time</option><option value="OUT">Out Time</option></select></label><label>{form.adjustmentField} Time<input type="time" value={form.adjustmentTime} onChange={e=>setForm({...form,adjustmentTime:e.target.value})} required/></label></>}
+          {form.type==="Meeting" && <label>Meeting Type<select value={form.meetingMode} onChange={e=>setForm({...form,meetingMode:e.target.value})}><option>Online</option><option>Physically</option></select></label>}
+          {form.type==="Meeting Journey" && <><label>From Time<input type="time" value={form.startTime} onChange={e=>setForm({...form,startTime:e.target.value})} required/></label><label>To Time<input type="time" value={form.endTime} onChange={e=>setForm({...form,endTime:e.target.value})} required/></label></>}
           <label className="full-span">Details<textarea value={form.details} onChange={e=>setForm({...form,details:e.target.value})} placeholder="Request details / reason" required/></label>
           <button className="primary full-span" disabled={busy || !canRequest}><Plus size={16}/> Submit Request</button>
         </form>
@@ -557,7 +580,7 @@ function RequestsCenter({session,notify}) {
   </div>
 }
 
-function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.38</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
+function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.39</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
 function PanelTitle({title,action}){return <div className="panel-title"><h3>{title}</h3>{action}</div>}

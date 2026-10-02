@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.38
+ * OFFICE TASK REPORT V.39
  * Google Apps Script backend
  *
  * Architecture:
@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.38',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.39',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.38',
+      version:'V.39',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.38',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.39',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -180,7 +180,7 @@ function ensureBackend_() {
     AuditLog:['time','username','action','module','details'],
     Holidays:['id','date','name','type','createdBy','createdAt'],
     SystemSettings:['key','value','updatedAt'],
-    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','updatedAt']
+    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']
   };
 
   // 5) Automatically create all support sheets.
@@ -364,6 +364,9 @@ function route_(action,b) {
     case 'approvalAction': return approvalAction_(b.session,b.id,b.status);
     case 'reports': return reports_(b.session);
     case 'notifications': return notifications_(b.session);
+    case 'profile': return profile_(b.session);
+    case 'changePassword': return changePassword_(b.session,b.currentPassword,b.newPassword);
+    case 'uploadProfilePhoto': return uploadProfilePhoto_(b.session,b.fileName,b.dataUrl,b.mimeType);
     case 'advanced': return advanced_(b.session);
     case 'createHoliday': return createHoliday_(b.session,b.holiday);
     case 'deleteHoliday': return deleteHoliday_(b.session,b.id);
@@ -531,7 +534,7 @@ function findUser_(username) {
   if(!r) return null;
   return {
     id:r.username, name:r.name, employeeId:r.employeeId || r.employeeCode || '', employeeCode:r.employeeId || r.employeeCode || '', username:r.username, role:r.role,
-    department:r.department,designation:r.designation,phone:r.phone,whatsapp:r.whatsapp,
+    department:r.department,designation:r.designation,phone:r.phone,whatsapp:r.whatsapp,password:r.password,
     office:r.office,address:r.address,country:r.country,region:r.region,state:r.state,
     division:r.division,district:r.district,status:r.status,
     officeInTime:r.officeInTime||'',officeOutTime:r.officeOutTime||'',weekoffDay:r.weekoffDay
@@ -752,6 +755,8 @@ function punch_(s,type,dateStr,timeStr) {
     updateByKey_(sh,'date',existing.date,{out:tm,officeMinutes:officeMinutes,status:'PRESENT'});
   }
   appendActivity_(f,user,'Attendance',`${type} time manually recorded for ${date}`);
+  const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||'')) && String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
+  notifyUsers_(admins,'Attendance Updated',`${user.name} (${user.employeeId}) ne ${date} ki ${type} attendance ${tm} par add ki hai.`,'ATTENDANCE');
   return {date:date,type:type,time:tm};
 }
 
@@ -984,9 +989,21 @@ function approvalAction_(s,id,status) {
   updateByKey_(a,'id',id,{status:status,updatedAt:new Date()});
   if(item.username && item.requestId){
     const u=findUser_(item.username);
-    if(u){ const f=getEmployeeFile_(u), sh=f.getSheetByName('Requests'); try{updateByKey_(sh,'id',item.requestId,{status:status});}catch(e){} }
+    if(u){
+      const f=getEmployeeFile_(u), sh=f.getSheetByName('Requests'); try{updateByKey_(sh,'id',item.requestId,{status:status});}catch(e){}
+      if(String(status)==='APPROVED' && String(item.type)==='Time Adjustment' && item.adjustmentField && item.adjustmentTime){
+        const es=master_().getSheetByName('EmployeeSettings'); ensureHeaderColumns_(es,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
+        const current=employeeSettings_(u); const patch={}; if(String(item.adjustmentField)==='IN') patch.officeInTime=String(item.adjustmentTime); else patch.officeOutTime=String(item.adjustmentTime); patch.updatedAt=new Date();
+        const existing=readRows_(es).find(function(r){return String(r.employeeId)===String(u.employeeId);}); if(existing) updateByKey_(es,'employeeId',u.employeeId,patch); else saveEmployeeSettings_(u,{officeCity:current.officeCity,officeAddress:current.officeAddress,officeInTime:patch.officeInTime||current.officeInTime,officeOutTime:patch.officeOutTime||current.officeOutTime,weekoffDay:current.weekoffDay});
+      }
+    }
   }
-  audit_(s,status,'APPROVAL',id); return {};
+  audit_(s,status,'APPROVAL',id);
+  const actor=findUser_(s.username);
+  if(item.username) notifyUsers_([item.username],'Request '+String(status).toLowerCase(),`${item.type} (${item.date}) ${String(status).toLowerCase()} ki gayi by ${actor?actor.name:s.username}.`,'APPROVAL');
+  const allApprovers=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||'')) && String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
+  notifyUsers_(allApprovers,'Request Updated',`${item.employeeName} ki ${item.type} request ${String(status).toLowerCase()} by ${actor?actor.name:s.username}.`,'APPROVAL');
+  return {};
 }
 
 function reports_(s) {
@@ -1049,7 +1066,7 @@ function employeeSettings_(user){
 function saveEmployeeSettings_(user,settings){
   if(!user || !user.employeeId) return;
   const sh=master_().getSheetByName('EmployeeSettings'); if(!sh) return;
-  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','updatedAt']);
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(function(r){return String(r.employeeId)===String(user.employeeId);});
   let day=settings.weekoffDay;
   if(day===''||day===null||day===undefined){
@@ -1101,12 +1118,24 @@ function saveWeekoff_(s,day) {
 function createRequest_(s,r) {
   if(!r || !r.type || !r.date) throw new Error('Request type and date are required.');
   const user=findUser_(s.username); if(!user) throw new Error('User not found.');
-  const file=getEmployeeFile_(user), sh=file.getSheetByName('Requests'); ensureHeaderColumns_(sh,['id','type','date','details','status','createdAt']);
+  const file=getEmployeeFile_(user), sh=file.getSheetByName('Requests'); ensureHeaderColumns_(sh,['id','type','date','details','startTime','endTime','meetingMode','adjustmentField','status','createdAt']);
   const id=Utilities.getUuid(), date=normalizeAttendanceDate_(r.date); if(!date) throw new Error('Invalid request date.');
-  appendObject_(sh,{id:id,type:String(r.type),date:date,details:String(r.details||''),status:'PENDING',createdAt:new Date()});
-  const a=master_().getSheetByName('Approvals'); ensureHeaderColumns_(a,['id','requestId','type','employeeId','employeeName','username','date','details','status','createdBy','createdAt','updatedAt']);
-  appendObject_(a,{id:Utilities.getUuid(),requestId:id,type:String(r.type),employeeId:user.employeeId,employeeName:user.name,username:user.username,date:date,details:String(r.details||''),status:'PENDING',createdBy:user.username,createdAt:new Date(),updatedAt:new Date()});
-  audit_(s,'CREATE','REQUEST',String(r.type)+' / '+date); return {requestId:id};
+  const type=String(r.type);
+  if(type==='Time Adjustment' && !['IN','OUT'].includes(String(r.adjustmentField||''))) throw new Error('Time Adjustment mein IN ya OUT select karein.');
+  if(type==='Time Adjustment' && !normalizeTime_(r.adjustmentTime)) throw new Error('Time Adjustment ka time select karein.');
+  if(type==='Meeting' && !['Online','Physically'].includes(String(r.meetingMode||''))) throw new Error('Meeting type select karein: Online ya Physically.');
+  if(type==='Meeting Journey'){ if(!normalizeTime_(r.startTime)||!normalizeTime_(r.endTime)) throw new Error('Meeting Journey mein From Time aur To Time dono select karein.'); if(minutesBetween_(r.startTime,r.endTime)<=0) throw new Error('Meeting Journey ka To Time, From Time ke baad hona chahiye.'); }
+  if(type==='Weekoff Adjustment' && !r.date) throw new Error('Weekoff Adjustment date required.');
+  let finalDetails=String(r.details||'');
+  if(type==='Time Adjustment') finalDetails=`${r.adjustmentField} Time: ${r.adjustmentTime}. ${finalDetails}`.trim();
+  if(type==='Meeting') finalDetails=`Mode: ${r.meetingMode}. ${finalDetails}`.trim();
+  if(type==='Meeting Journey') finalDetails=`Duration: ${r.startTime} to ${r.endTime}. ${finalDetails}`.trim();
+  appendObject_(sh,{id:id,type:type,date:date,details:finalDetails,startTime:r.startTime||'',endTime:r.endTime||'',meetingMode:r.meetingMode||'',adjustmentField:r.adjustmentField||'',status:'PENDING',createdAt:new Date()});
+  const a=master_().getSheetByName('Approvals'); ensureHeaderColumns_(a,['id','requestId','type','employeeId','employeeName','username','date','details','startTime','endTime','meetingMode','adjustmentField','adjustmentTime','status','createdBy','createdAt','updatedAt']);
+  appendObject_(a,{id:Utilities.getUuid(),requestId:id,type:type,employeeId:user.employeeId,employeeName:user.name,username:user.username,date:date,details:finalDetails,startTime:r.startTime||'',endTime:r.endTime||'',meetingMode:r.meetingMode||'',adjustmentField:r.adjustmentField||'',adjustmentTime:r.adjustmentTime||'',status:'PENDING',createdBy:user.username,createdAt:new Date(),updatedAt:new Date()});
+  const approvers=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||'')) && String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
+  notifyUsers_(approvers,'New Approval Request',`${user.name} ne ${type} request submit ki hai for ${date}.`,'APPROVAL');
+  audit_(s,'CREATE','REQUEST',type+' / '+date); return {requestId:id};
 }
 
 function auditLog_(s) {
@@ -1115,7 +1144,52 @@ function auditLog_(s) {
 
 function notifications_(s) {
   const sh=master_().getSheetByName('Notifications');
-  return {rows:readRows_(sh).filter(r=>r.username===s.username || r.username==='*').reverse().slice(0,30)};
+  return {rows:readRows_(sh).filter(r=>r.username===s.username || r.username==='*').reverse().slice(0,50)};
+}
+
+function notifyUsers_(usernames,title,message,type){
+  const sh=master_().getSheetByName('Notifications');
+  if(!sh) return;
+  ensureHeaderColumns_(sh,['id','username','title','message','type','time','read']);
+  const list=[...new Set((usernames||[]).filter(Boolean))];
+  list.forEach(function(username){
+    appendObject_(sh,{id:Utilities.getUuid(),username:username,title:String(title||''),message:String(message||''),type:type||'INFO',time:new Date(),read:'N'});
+  });
+}
+
+function profile_(s){
+  const u=findUser_(s.username); if(!u) throw new Error('User not found.');
+  const st=employeeSettings_(u);
+  let photoUrl='';
+  try{ const r=readRows_(master_().getSheetByName('EmployeeSettings')).find(x=>String(x.employeeId)===String(u.employeeId)); photoUrl=r&&r.photoUrl||''; }catch(e){}
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:photoUrl}};
+}
+
+function changePassword_(s,currentPassword,newPassword){
+  const u=findUser_(s.username); if(!u) throw new Error('User not found.');
+  if(String(currentPassword||'')!==String(u.password||'')) throw new Error('Current password is incorrect.');
+  const np=String(newPassword||''); if(np.length<4) throw new Error('New password must be at least 4 characters.');
+  const sh=master_().getSheetByName('Users'); updateByKey_(sh,'username',u.username,{password:np,updatedAt:new Date()}); invalidateUsersCache_();
+  audit_(s,'UPDATE','PASSWORD','Employee changed own password');
+  notifyUsers_([u.username],'Password Changed','Aapka login password successfully change ho gaya.','SECURITY');
+  return {};
+}
+
+function uploadProfilePhoto_(s,fileName,dataUrl,mimeType){
+  const u=findUser_(s.username); if(!u) throw new Error('User not found.');
+  if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
+  const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/); if(!match) throw new Error('Invalid photo data.');
+  const bytes=Utilities.base64Decode(match[2]);
+  if(bytes.length>2*1024*1024) throw new Error('Photo 2 MB se chhoti honi chahiye.');
+  const folder=DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_ID'));
+  const safe=String(fileName||'profile.jpg').replace(/[^a-zA-Z0-9._-]/g,'_');
+  const blob=Utilities.newBlob(bytes,mimeType||match[1],u.employeeId+'_'+safe);
+  const file=folder.createFile(blob); try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){} const url='https://drive.google.com/uc?export=view&id='+file.getId();
+  const sh=master_().getSheetByName('EmployeeSettings'); ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
+  const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(u.employeeId));
+  if(existing) updateByKey_(sh,'employeeId',u.employeeId,{photoUrl:url,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,photoUrl:url,updatedAt:new Date()});
+  audit_(s,'UPDATE','PROFILE','Profile photo updated');
+  return {photoUrl:url};
 }
 
 function getEmployeeFile_(u) {
