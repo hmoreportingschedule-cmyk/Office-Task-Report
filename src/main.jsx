@@ -203,6 +203,22 @@ function formatAttendanceDate(v){
   if(!d || Number.isNaN(d.getTime())) return s;
   return `${String(d.getDate()).padStart(2,"0")}-${d.toLocaleString("en-IN",{month:"short"})}-${d.getFullYear()}`;
 }
+function formatAttendanceStatus(v){
+  const s=String(v??"").trim();
+  if(!s) return "-";
+  const u=s.toUpperCase();
+  if(u==="PRESENT") return "Present";
+  if(u==="HOLIDAY") return "Holiday";
+  if(u==="WEEKLY OFF"||u==="WEEKOFF"||u==="WEEK OFF") return "Weekly Off";
+  if(u==="LEAVE") return "Leave";
+  if(u==="ABSENT") return "Absent";
+  return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();
+}
+function formatApprovalStatus(v){
+  const u=String(v??"Not Approve").trim().toUpperCase();
+  return ["APPROVE","APPROVED","APPROVAL","YES","Y","OK","TRUE","1"].includes(u)?"Approve":"Not Approve";
+}
+
 function formatAttendanceTime(v){
   if(v===null || v===undefined || v==="") return "-";
   const s=String(v).trim();
@@ -220,6 +236,9 @@ function formatAttendanceTime(v){
 
 function Attendance({session,notify}) {
   const [data,setData]=useState(null); const [busy,setBusy]=useState(false);
+  const nowForPeriod=new Date();
+  const [reportMonth,setReportMonth]=useState(String(nowForPeriod.getMonth()+1).padStart(2,'0'));
+  const [reportYear,setReportYear]=useState(String(nowForPeriod.getFullYear()));
   const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null);
   const [attendanceDate,setAttendanceDate]=useState("");
   const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
@@ -228,7 +247,7 @@ function Attendance({session,notify}) {
   const load=async()=>{
     setBusy(true);
     try{
-      const r=await api("attendance",{session});
+      const r=await api("attendance",{session,month:reportMonth,year:reportYear});
       setData(r);
       setAttendanceDate(r.editableDates?.[0]?.date || "");
       const selected=(r.rows||[]).find(x=>x.date=== (r.editableDates?.[0]?.date || ""));
@@ -244,6 +263,8 @@ function Attendance({session,notify}) {
     setInTime((row?.in||"").slice(0,5));
     setOutTime((row?.out||"").slice(0,5));
   };
+
+  useEffect(()=>{load()},[reportMonth,reportYear]);
 
   const saveManualAttendance=async()=>{
     if(!attendanceDate){notify("error","Attendance date select karein.");return;}
@@ -322,7 +343,7 @@ function Attendance({session,notify}) {
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
       </section>
-      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes,r.status,r.approveStatus||"NOT APPROVE"])}/>}</section>
+      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
     </div>
   </div>
 }
