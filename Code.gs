@@ -176,6 +176,7 @@ function ensureBackend_() {
     ],
     Templates:['id','name','details','category','priority','fromDay','toDay','createdBy','createdAt'],
     Notifications:['id','username','title','message','type','time','read'],
+    Notes:['id','username','role','text','date','time','createdAt'],
     Approvals:['id','requestId','type','employeeId','employeeName','username','date','details','status','createdBy','createdAt','updatedAt'],
     AuditLog:['time','username','action','module','details'],
     Holidays:['id','date','name','type','createdBy','createdAt'],
@@ -350,6 +351,9 @@ function route_(action,b) {
     case 'attendance': return attendance_(b.session,b.month,b.year);
     case 'importAttendance': return importAttendance_(b.session,b.rows);
     case 'punch': return punch_(b.session,b.type,b.date,b.time);
+    case 'saveBreak': return saveBreak_(b.session,b.date,b.breakNo,b.breakType,b.namazType,b.startTime,b.endTime,b.reason);
+    case 'notes': return notes_(b.session);
+    case 'saveNote': return saveNote_(b.session,b.note);
     case 'tasks': return tasks_(b.session);
     case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes);
     case 'assignTask': return assignTask_(b.session,b.task);
@@ -569,7 +573,9 @@ function dashboard_(s) {
 }
 
 function attendance_(s,month,year) {
-  const user=findUser_(s.username), f=getEmployeeFile_(user), rows=readRows_(f.getSheetByName('Attendance'));
+  const user=findUser_(s.username), f=getEmployeeFile_(user), attSh=f.getSheetByName('Attendance');
+  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  const rows=readRows_(attSh);
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
   const yesterdayStr=Utilities.formatDate(yesterday,Session.getScriptTimeZone(),'yyyy-MM-dd');
@@ -795,6 +801,7 @@ function punch_(s,type,dateStr,timeStr) {
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
   const rows=readRows_(sh);
   let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
@@ -802,8 +809,8 @@ function punch_(s,type,dateStr,timeStr) {
   // second read will immediately return the row; this was causing
   // "Cannot read properties of undefined (reading 'in')" during Save.
   if(!existing){
-    appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT'});
-    existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT'};
+    appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,break1Type:'',break1NamazType:'',break1Start:'',break1End:'',break1Reason:'',break2Type:'',break2NamazType:'',break2Start:'',break2End:'',break2Reason:'',break3Type:'',break3NamazType:'',break3Start:'',break3End:'',break3Reason:'',status:'PRESENT',approveStatus:'Not Approve'});
+    existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,break1Type:'',break1NamazType:'',break1Start:'',break1End:'',break1Reason:'',break2Type:'',break2NamazType:'',break2Start:'',break2End:'',break2Reason:'',break3Type:'',break3NamazType:'',break3Start:'',break3End:'',break3Reason:'',status:'PRESENT',approveStatus:'Not Approve'};
   }
 
   if(type==='IN'){
@@ -821,6 +828,43 @@ function punch_(s,type,dateStr,timeStr) {
   const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||'')) && String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
   notifyUsers_(admins,'Attendance Updated',`${user.name} (${user.employeeId}) ne ${date} ki ${type} attendance ${tm} par add ki hai.`,'ATTENDANCE');
   return {date:date,type:type,time:tm};
+}
+
+function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reason){
+  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  const date=normalizeAttendanceDate_(dateStr); if(!date) throw new Error('Valid attendance date select karein.');
+  const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'); if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
+  const n=Number(breakNo); if(![1,2,3].includes(n)) throw new Error('Maximum 3 breaks allowed hain.');
+  const type=String(breakType||'').trim(); if(!type) throw new Error('Break type select karein.');
+  const start=normalizeTime_(startTime), end=normalizeTime_(endTime); if(!start||!end) throw new Error('Break Start aur End Time dono select karein.');
+  const mins=minutesBetween_(start,end); if(mins<=0) throw new Error('Break End Time, Start Time ke baad hona chahiye.');
+  if(type==='Namaz' && !String(namazType||'').trim()) throw new Error('Namaz ka type select karein.');
+  if(type==='Other' && !String(reason||'').trim()) throw new Error('Other break ke liye reason likhein.');
+  const rows=readRows_(sh); let row=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
+  if(!row){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}); row={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}; }
+  for(let i=1;i<n;i++) if(!row[`break${i}End`]) throw new Error(`Break ${i} pehle complete karein.`);
+  const prefix=`break${n}`;
+  const oldMinutes=[1,2,3].reduce((sum,i)=>sum+minutesBetween_(row[`break${i}Start`],row[`break${i}End`]),0);
+  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins;
+  updateByKey_(sh,'date',date,patch);
+  appendActivity_(f,user,'Attendance Break',`${type}${namazType?` (${namazType})`:''} · ${start}-${end} · ${date}`);
+  return {date,breakNo:n,breakType:type,namazType:namazType||'',startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
+}
+
+function notes_(s){
+  const sh=master_().getSheetByName('Notes'); if(!sh) return {rows:[]};
+  ensureHeaderColumns_(sh,['id','username','role','text','date','time','createdAt']);
+  return {rows:readRows_(sh).filter(r=>String(r.username)===String(s.username)).slice(-100).reverse()};
+}
+function saveNote_(s,note){
+  const sh=master_().getSheetByName('Notes'); if(!sh) throw new Error('Notes sheet unavailable.');
+  ensureHeaderColumns_(sh,['id','username','role','text','date','time','createdAt']);
+  const text=String(note&&note.text||'').trim(); if(!text) throw new Error('Note text required hai.');
+  const now=new Date(), date=normalizeAttendanceDate_(note&&note.date)||Utilities.formatDate(now,Session.getScriptTimeZone(),'yyyy-MM-dd'), time=normalizeTime_(note&&note.time)||Utilities.formatDate(now,Session.getScriptTimeZone(),'HH:mm:ss');
+  appendObject_(sh,{id:Utilities.getUuid(),username:s.username,role:s.role,text:text,date:date,time:time,createdAt:now});
+  audit_(s,'CREATE','NOTE',text.slice(0,200));
+  return {saved:true};
 }
 
 function normalizeTime_(value){
@@ -1018,6 +1062,7 @@ function createEmployee_(s,e) {
   invalidateUsersCache_();
   const u=findUser_(username);
   saveEmployeeSettings_(u,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay});
+  if(e.photoDataUrl) uploadProfilePhotoForAdmin_(s,u,e.photoFileName,e.photoDataUrl,e.photoMimeType);
   const file=getEmployeeFile_(u);
   invalidateUsersCache_();
   appendActivity_(file,u,'Profile',`Employee file created for ${new Date().getFullYear()}`);
@@ -1048,6 +1093,7 @@ function updateEmployee_(s,e) {
   updateByKey_(sh,'username',e.username,patch);
   const updatedUser=findUser_(e.username);
   saveEmployeeSettings_(updatedUser,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay});
+  if(e.photoDataUrl) uploadProfilePhotoForAdmin_(s,updatedUser,e.photoFileName,e.photoDataUrl,e.photoMimeType);
   invalidateUsersCache_();
   audit_(s,'UPDATE','EMPLOYEE',`${e.name} / ${e.employeeId || e.code || ''}`);
   syncEmployeeProfile_(e);
@@ -1383,19 +1429,34 @@ function changePassword_(s,currentPassword,newPassword){
 }
 
 function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
-  // Employee photos are managed from the Admin Users/Profile screen only.
-  assertAdmin_(s);
   const target=findUser_(targetUsername); if(!target) throw new Error('Employee not found.');
+  return uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType);
+}
+
+// Shared Admin/Master Admin photo uploader. Keeping the actual upload logic here
+// also lets User Create/Update save the photo in the same request, avoiding a
+// second API action that can fail when an older Worker/Apps Script deployment is live.
+function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType){
+  assertAdmin_(s);
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
   const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/); if(!match) throw new Error('Invalid photo data.');
   const bytes=Utilities.base64Decode(match[2]);
   if(bytes.length>2*1024*1024) throw new Error('Photo 2 MB se chhoti honi chahiye.');
-  const folder=DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_ID'));
+  let folder;
+  const props=PropertiesService.getScriptProperties();
+  const folderId=props.getProperty('PHOTO_FOLDER_ID');
+  if(folderId){ try{folder=DriveApp.getFolderById(folderId);}catch(e){} }
+  if(!folder){
+    folder=getOrCreateFolderPath_(['Dashboard Working','office-task-report','Employees Photo']);
+    props.setProperty('PHOTO_FOLDER_ID',folder.getId());
+  }
   const safe=String(fileName||'profile.jpg').replace(/[^a-zA-Z0-9._-]/g,'_');
-  const blob=Utilities.newBlob(bytes,mimeType||match[1],target.employeeId+'_'+safe);
-  const file=folder.createFile(blob); try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){}
+  const blob=Utilities.newBlob(bytes,mimeType||match[1],String(target.employeeId)+'_'+safe);
+  const file=folder.createFile(blob);
+  try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){}
   const url='https://drive.google.com/uc?export=view&id='+file.getId();
-  const sh=master_().getSheetByName('EmployeeSettings'); ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
+  const sh=master_().getSheetByName('EmployeeSettings');
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(target.employeeId));
   if(existing) updateByKey_(sh,'employeeId',target.employeeId,{photoUrl:url,updatedAt:new Date()});
   else appendObject_(sh,{employeeId:target.employeeId,username:target.username,officeCity:target.office||'',officeAddress:target.address||'',officeInTime:target.officeInTime||'',officeOutTime:target.officeOutTime||'',weekoffDay:target.weekoffDay!==undefined?target.weekoffDay:'',photoUrl:url,updatedAt:new Date()});
@@ -1422,7 +1483,7 @@ function setupEmployeeSheets_(ss,u) {
   const first=ss.getSheets()[0]; first.setName('Profile');
   const map={
     Profile:['name','employeeId','username','role','department','designation','phone','whatsapp','office','address','country','region','state','division','district','year'],
-    Attendance:['date','in','out','officeMinutes','breakMinutes','status'],
+    Attendance:['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus'],
     Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt'],
     TaskTime:['taskId','date','start','end','minutes'],
     Leave:['id','from','to','type','reason','status','createdAt'],

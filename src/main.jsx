@@ -3,13 +3,13 @@ import { createRoot } from "react-dom/client";
 import {
   Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard, ClipboardCheck,
   LogOut, Menu, ShieldCheck, Users, ClipboardList, Search, Pencil,
-  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound
+  UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound, StickyNote
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.57
+// Office Task Report V.60
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -90,6 +90,7 @@ function App() {
           {view === "notifications" && <Notifications session={session} notify={notify} />}
           {view === "requests" && <RequestsCenter session={session} notify={notify} />}
           {view === "profile" && <Profile session={session} notify={notify} />}
+          {view === "notes" && <Notes session={session} notify={notify} />}
         </div>
       </main>
       {toast && <div className={`toast ${toast.type}`}>{toast.type === "success" ? <Check size={17}/> : <AlertCircle size={17}/>} {toast.message}</div>}
@@ -144,6 +145,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
     ["notifications", "Notifications", Bell],
     ["requests", "Requests & Advanced", ClipboardCheck],
     ["profile", "My Profile", UserCircle2],
+    ["notes", "Notes", StickyNote],
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
@@ -242,6 +244,8 @@ function Attendance({session,notify}) {
   const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null);
   const [attendanceDate,setAttendanceDate]=useState("");
   const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
+  const emptyBreak=()=>({type:"",namazType:"",start:"",end:"",reason:""});
+  const [breaks,setBreaks]=useState([emptyBreak(),emptyBreak(),emptyBreak()]);
   const fileRef=React.useRef(null);
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const load=async()=>{
@@ -262,6 +266,7 @@ function Attendance({session,notify}) {
     const row=(data?.rows||[]).find(x=>x.date===date);
     setInTime((row?.in||"").slice(0,5));
     setOutTime((row?.out||"").slice(0,5));
+    setBreaks([1,2,3].map(i=>({type:row?.[`break${i}Type`]||"",namazType:row?.[`break${i}NamazType`]||"",start:(row?.[`break${i}Start`]||"").slice(0,5),end:(row?.[`break${i}End`]||"").slice(0,5),reason:row?.[`break${i}Reason`]||""})));
   };
 
   useEffect(()=>{load()},[reportMonth,reportYear]);
@@ -273,7 +278,12 @@ function Attendance({session,notify}) {
       // Save IN first and OUT second so existing server-side validation remains intact.
       if(inTime) await api("punch",{session,type:"IN",date:attendanceDate,time:inTime});
       if(outTime) await api("punch",{session,type:"OUT",date:attendanceDate,time:outTime});
-      notify("success","Attendance time save ho gaya.");
+      for(let i=0;i<breaks.length;i++){
+        const b=breaks[i];
+        if(!b.type && !b.start && !b.end && !b.reason) continue;
+        await api("saveBreak",{session,date:attendanceDate,breakNo:i+1,breakType:b.type,namazType:b.namazType,startTime:b.start,endTime:b.end,reason:b.reason});
+      }
+      notify("success","Attendance aur break details save ho gayi.");
       await load();
     }catch(e){
       notify("error", e?.message || "Attendance save nahi ho saki. Please dobara try karein.");
@@ -339,6 +349,19 @@ function Attendance({session,notify}) {
             <input type="time" value={outTime} onChange={e=>setOutTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
           </label>
           <div className="assign-note full-span"><Clock3 size={15}/> Office Time: <b>{data?.settings?.officeInTime||"--:--"}</b> to <b>{data?.settings?.officeOutTime||"--:--"}</b> · Weekoff: <b>{data?.settings?.weekoffLabel||"Default"}</b></div>
+          <div className="break-section full-span">
+            <div className="break-section-head"><div><b>Break Time</b><small>Maximum 3 breaks per working day.</small></div><span className="muted">Namaz · Lunch · Gharelu Emergency · Other</span></div>
+            {breaks.map((b,i)=><div className="break-card" key={i}>
+              <div className="break-title">Break {i+1}</div>
+              <label>Break Type<select value={b.type} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,type:e.target.value,namazType:e.target.value==='Namaz'?x.namazType:'',reason:e.target.value==='Other'?x.reason:''}:x))}>
+                <option value="">Select Break</option><option value="Namaz">Namaz</option><option value="Lunch">Lunch</option><option value="Gharelu Emergency">Gharelu Emergency</option><option value="Other">Other</option>
+              </select></label>
+              {b.type==='Namaz' && <label>Namaz Type<select value={b.namazType} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,namazType:e.target.value}:x))}><option value="">Select</option><option value="Zohar / Juma">Zohar / Juma</option><option value="Asr">Asr</option><option value="Magrib">Magrib</option></select></label>}
+              <label>Start Time<input type="time" value={b.start} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,start:e.target.value}:x))}/></label>
+              <label>End Time<input type="time" value={b.end} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,end:e.target.value}:x))}/></label>
+              {b.type==='Other' && <label>Reason<input value={b.reason} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,reason:e.target.value}:x))} placeholder="Break reason"/></label>}
+            </div>)}
+          </div>
           {selectedRule?.nonWorking && <div className="assign-note full-span">{selectedRule.reason || "Leave / Weekoff / Weekoff Adjustment"}. Attendance select karne ki zarurat nahi hai.</div>}
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
@@ -346,6 +369,18 @@ function Attendance({session,notify}) {
       <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
     </div>
   </div>
+}
+
+function Notes({session,notify}) {
+  const now=new Date();
+  const [rows,setRows]=useState([]), [text,setText]=useState(""), [date,setDate]=useState(now.toISOString().slice(0,10)), [time,setTime]=useState(now.toTimeString().slice(0,5)), [busy,setBusy]=useState(false);
+  const load=async()=>{try{const r=await api("notes",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
+  useEffect(()=>{load()},[]);
+  const save=async(e)=>{e.preventDefault();if(!text.trim()){notify("error","Note text required hai.");return;}setBusy(true);try{await api("saveNote",{session,note:{text:text.trim(),date,time}});notify("success","Note save ho gaya.");setText("");await load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  return <div><PageHead title="Notes" subtitle="Important baatein, follow-up aur yaad rakhne wali details yahan save karein." action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/>
+    <div className="two-col notes-layout"><section className="panel"><PanelTitle title="Add Note"/><form className="form-grid" onSubmit={save}><label className="full-span">Text<textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Note likhein..." rows="6" required/></label><label>Date<input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></label><label>Time<input type="time" value={time} onChange={e=>setTime(e.target.value)} required/></label><button className="primary full-span" disabled={busy}><StickyNote size={16}/> {busy?"Saving…":"Save Note"}</button></form></section>
+    <section className="panel"><PanelTitle title="My Notes"/>{rows.length?<div className="notes-list">{rows.map(r=><div className="note-item" key={r.id}><div className="note-meta"><span>{formatAttendanceDate(r.date)}</span><span>{formatAttendanceTime(r.time)}</span></div><div className="note-text">{r.text}</div></div>)}</div>:<div className="empty">No notes found.</div>}</section></div>
+  </div>;
 }
 
 function Profile({session,notify}) {
@@ -516,8 +551,8 @@ function Employees({session,notify}) {
   const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setPhotoFile(null);setPhotoPreview("");setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
   const reset=()=>{setForm(empty);setPhotoFile(null);setPhotoPreview("");setEditing(false)};
   const selectEmployeePhoto=(e)=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return}if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return}setPhotoFile(f);const reader=new FileReader();reader.onload=()=>setPhotoPreview(String(reader.result||""));reader.readAsDataURL(f)};
-  const uploadEmployeePhotoForUser=async(username,file)=>{if(!file)return;const reader=new FileReader();return new Promise((resolve,reject)=>{reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,targetUsername:username,fileName:file.name,dataUrl:reader.result,mimeType:file.type});resolve(r)}catch(err){reject(err)}};reader.onerror=()=>reject(new Error("Photo read nahi ho saki."));reader.readAsDataURL(file)})};
-  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});if(photoFile)await uploadEmployeePhotoForUser(form.username,photoFile);notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});if(photoFile)await uploadEmployeePhotoForUser(form.username,photoFile);notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e?.message||"User save nahi ho saka.")}finally{setBusy(false)}};
+  const readPhotoForSave=async(file)=>{if(!file)return null;return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({photoDataUrl:reader.result,photoFileName:file.name,photoMimeType:file.type});reader.onerror=()=>reject(new Error("Photo read nahi ho saki."));reader.readAsDataURL(file)})};
+  const save=async(e)=>{e.preventDefault();setBusy(true);try{const photo=await readPhotoForSave(photoFile);const employeePayload={...form,...(photo||{})};if(editing){await api("updateEmployee",{session,employee:employeePayload});notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:employeePayload});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e?.message||"User save nahi ho saka.")}finally{setBusy(false)}};
   const viewProfile=async(r)=>{try{const x=await api("employeeProfile",{session,username:r.username});setProfile(x.profile)}catch(e){notify("error",e.message)}};
   const uploadEmployeePhoto=async(e)=>{const f=e.target.files?.[0]; if(!f||!profile)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return} const reader=new FileReader(); reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,targetUsername:profile.username,fileName:f.name,dataUrl:reader.result,mimeType:f.type});setProfile(p=>({...p,photoUrl:r.photoUrl}));notify("success","Employee profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{e.target.value=""}}; reader.readAsDataURL(f)};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
