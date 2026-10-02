@@ -1,9 +1,7 @@
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyfL_lBPCkUlHzvv0iWvbUyNmhjSE7dVh6yqHp0L4E9JAs8S6e9jDx3v2dKku3ClK6M/exec";
+
 export default {
   async fetch(request, env) {
-    const APPS_SCRIPT_URL = env.APPS_SCRIPT_URL;
-    if (!APPS_SCRIPT_URL && new URL(request.url).pathname.startsWith("/api/office-task")) {
-      return json({ok:false,message:"APPS_SCRIPT_URL secret is not configured."}, 500, request);
-    }
     const url = new URL(request.url);
 
     if (url.pathname === "/api/office-task") {
@@ -63,9 +61,9 @@ export default {
       return json({
         ok:true,
         app:"Office Task Report",
-        worker:"V.39",
+        worker:"V.38",
         proxy:true,
-        appsScriptConfigured:Boolean(APPS_SCRIPT_URL)
+        appsScript:APPS_SCRIPT_URL
       }, 200, request);
     }
 
