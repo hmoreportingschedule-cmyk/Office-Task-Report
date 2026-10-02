@@ -11,20 +11,40 @@ import "./styles.css";
 
 // Office Task Report - Google Apps Script Web App
 // V.7: default endpoint configured; Vercel env variable can still override it.
+// Office Task Report - fixed production Apps Script endpoint.
+// Deliberately do NOT allow a stale Vercel VITE_APPS_SCRIPT_URL value to override it.
 const API_URL =
-  import.meta.env.VITE_APPS_SCRIPT_URL ||
   "https://script.google.com/macros/s/AKfycbwpHrngTPA6skC0VNaR3BWeXW_ELni6cd5wQSypzVGAXyL9cJEFlYBw1YHI07NrExYusg/exec";
 
 async function api(action, payload = {}) {
-  if (!API_URL) throw new Error("VITE_APPS_SCRIPT_URL is not configured.");
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, ...payload })
-  });
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.message || "Request failed");
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action, ...payload }),
+      signal: controller.signal,
+      cache: "no-store"
+    });
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error("Backend ne JSON response nahi diya. Apps Script Web App deployment/access check karein."); }
+
+    if (!res.ok || !data.ok) {
+      throw new Error(data.message || `Backend request failed (${res.status}).`);
+    }
+    return data;
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw new Error("Sign in timeout. Apps Script Web App deployment/access ya network connection check karein.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function App() {
@@ -85,8 +105,8 @@ function Login({ onLogin, notify }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const health = await api("health");
-      if (!health.ready) throw new Error(health.message || "Backend setup pending.");
+      // Login is intentionally a single request. The previous health-before-login
+      // call made low-bandwidth/slow Apps Script deployments feel stuck.
       const r = await api("login", { username: user.trim(), password });
       onLogin(r.session);
     } catch (e) {
