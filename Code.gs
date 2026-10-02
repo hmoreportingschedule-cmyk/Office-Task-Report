@@ -574,8 +574,14 @@ function attendance_(s) {
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
   const yesterdayStr=Utilities.formatDate(yesterday,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const rules=getAttendanceRules_(user);
-  const dates=[todayStr,yesterdayStr];
-  const editableDates=dates.map(function(d){return {date:d,label:d===todayStr?'Today': 'Yesterday',nonWorking:isNonWorkingDate_(d,rules),reason:rules.reasonMap[d]||''};});
+  // Testing-friendly: allow any past date, but never allow a future date.
+  // The UI uses the same lower bound for a consistent experience.
+  const editableDates=[];
+  const start=new Date(today); start.setDate(start.getDate()-90);
+  for(let d=new Date(today); d>=start; d.setDate(d.getDate()-1)){
+    const ds=Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd');
+    editableDates.push({date:ds,label:ds===todayStr?'Today':(ds===yesterdayStr?'Yesterday':ds),nonWorking:isNonWorkingDate_(ds,rules),reason:rules.reasonMap[ds]||''});
+  }
   const office=employeeSettings_(user);
   const rosterToday=getAttendanceRoster_(user,todayStr);
   const rosterYesterday=getAttendanceRoster_(user,yesterdayStr);
@@ -615,7 +621,6 @@ function importAttendance_(s, inputRows) {
       const r = normalizeAttendanceImportRow_(raw);
       if (!r.employeeCode) { errors.push(`Row ${idx+2}: Employee Id missing.`); return; }
       if (!r.date) { errors.push(`Row ${idx+2}: Date missing.`); return; }
-      if (isNonWorkingDate_(r.date,rules)) { errors.push(`Row ${idx+2}: ${r.date} is a holiday/weekoff; attendance skipped.`); return; }
       const user = byCode[String(r.employeeCode).trim()];
       if (!user) { errors.push(`Row ${idx+2}: Employee Id ${r.employeeCode} not found.`); return; }
       valid++;
@@ -629,7 +634,7 @@ function importAttendance_(s, inputRows) {
       const group = groups[code], user = group.user;
       const file = getEmployeeFile_(user);
       const sh = file.getSheetByName('Attendance');
-      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','status']);
+      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','status','approveStatus']);
       const range = sh.getDataRange();
       const values = range.getValues();
       const headers = values.shift().map(String);
@@ -650,7 +655,8 @@ function importAttendance_(s, inputRows) {
           if (idx.out !== undefined) row[idx.out] = r.out || '';
           if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = r.officeMinutes === '' ? '' : Number(r.officeMinutes || 0);
           if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? '' : Number(r.breakMinutes || 0);
-          if (idx.status !== undefined) row[idx.status] = r.status || ((r.in || r.out) ? 'PRESENT' : '');
+          if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : ''));
+          if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'NOT APPROVE';
           values.push(row);
           byDate[r.date] = {row:row,index:values.length-1};
           added++;
@@ -671,7 +677,8 @@ function importAttendance_(s, inputRows) {
         fillBlank('out', r.out);
         fillBlank('officeMinutes', r.officeMinutes);
         fillBlank('breakMinutes', r.breakMinutes);
-        fillBlank('status', r.status || ((r.in || r.out) ? 'PRESENT' : ''));
+        fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : '')));
+        fillBlank('approveStatus', r.approveStatus || 'NOT APPROVE');
         if (changed) updated++; else skipped++;
       });
 
@@ -680,6 +687,8 @@ function importAttendance_(s, inputRows) {
       }
     });
 
+    const affected=Object.keys(groups).map(function(code){return groups[code].user.username;});
+    if(affected.length) notifyUsers_(affected,'Attendance Imported','Admin ne attendance file import ki hai. Aapki attendance turant update kar di gayi hai.','ATTENDANCE');
     audit_(s,'IMPORT','ATTENDANCE',`Rows ${valid}, Added ${added}, Updated blank fields ${updated}, Skipped ${skipped}`);
     return {added:added, updated:updated, skipped:skipped, errors:errors.slice(0,100), total:inputRows.length};
   } finally {
@@ -705,7 +714,8 @@ function normalizeAttendanceImportRow_(raw) {
     out: normalizeAttendanceTime_(pick(['out','OUT','outTime','OUT Time','Out Time'])),
     officeMinutes: normalizeNumber_(pick(['officeMinutes','Office Minutes','office time','Office Time'])),
     breakMinutes: normalizeNumber_(pick(['breakMinutes','Break Minutes','break time','Break Time'])),
-    status: String(pick(['status','Status']) || '').trim()
+    status: String(pick(['status','Status']) || '').trim(),
+    approveStatus: normalizeApprovalStatus_(pick(['approveStatus','Approve/Not Approve','Approve','Approval Status','approvalStatus']))
   };
 }
 
@@ -720,10 +730,16 @@ function normalizeAttendanceTime_(v) {
   if (v instanceof Date) return Utilities.formatDate(v,Session.getScriptTimeZone(),'HH:mm:ss');
   const s = String(v).trim();
   if (!s) return '';
-  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
-    const p=s.split(':'); return String(p[0]).padStart(2,'0')+':'+p[1]+':'+String(p[2]||'00').padStart(2,'0');
-  }
-  return s;
+  const ampm=s.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\s*(AM|PM)$/i);
+  if(ampm){ let h=Number(ampm[1]); const mi=ampm[2], sec=ampm[3]||'00', ap=ampm[4].toUpperCase(); if(h<1||h>12)return ''; if(ap==='AM'&&h===12)h=0; if(ap==='PM'&&h!==12)h+=12; return String(h).padStart(2,'0')+':'+mi+':'+sec; }
+  const twenty=s.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/);
+  if(twenty){ const h=Number(twenty[1]),mi=twenty[2],sec=twenty[3]||'00'; if(h>23)return ''; return String(h).padStart(2,'0')+':'+mi+':'+sec; }
+  return '';
+}
+
+function normalizeApprovalStatus_(v){
+  const s=String(v||'').trim().toUpperCase();
+  return ['APPROVE','APPROVED','YES','Y','OK','TRUE','1'].includes(s) ? 'APPROVE' : 'NOT APPROVE';
 }
 
 function normalizeAttendanceDate_(v) {
@@ -733,7 +749,13 @@ function normalizeAttendanceDate_(v) {
   if (!s) return '';
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
   let m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  if(m){
+    const a=Number(m[1]), b=Number(m[2]), y=m[3];
+    // Support both DD/MM/YYYY and MM/DD/YYYY where the values are unambiguous.
+    let day=a, month=b;
+    if(a<=12 && b>12){ month=a; day=b; }
+    if(month>=1&&month<=12&&day>=1&&day<=31) return y+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+  }
   m=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/);
   if(m) return m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0');
   const d=new Date(s);
@@ -744,10 +766,9 @@ function normalizeAttendanceDate_(v) {
 function punch_(s,type,dateStr,timeStr) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
-  const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
-  const yesterdayStr=Utilities.formatDate(yesterday,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const date=normalizeAttendanceDate_(dateStr || todayStr);
-  if(![todayStr,yesterdayStr].includes(date)) throw new Error('Employee sirf aaj ya previous 1 day ki attendance add kar sakta hai. Future date allowed nahi hai.');
+  if(!date) throw new Error('Valid attendance date select karein.');
+  if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const rules=getAttendanceRules_(user);
   if(isNonWorkingDate_(date,rules)) throw new Error((rules.reasonMap[date]||'Weekoff / Leave / Adjustment')+' hai. Attendance required nahi hai.');
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
@@ -759,12 +780,12 @@ function punch_(s,type,dateStr,timeStr) {
     existing=readRows_(sh).find(r=>normalizeAttendanceDate_(r.date)===date);
   }
   if(type==='IN'){
-    if(existing.in) throw new Error('Is date ka IN Time already recorded hai.');
-    if(existing.out) throw new Error('OUT Time already exists. Pehle data correct karein.');
-    updateByKey_(sh,'date',existing.date,{in:tm,status:'PRESENT'});
+    if(existing.out && minutesBetween_(tm,existing.out)<=0) throw new Error('IN Time, existing OUT Time se pehle hona chahiye.');
+    const patch={in:tm,status:'PRESENT'};
+    if(existing.out) patch.officeMinutes=minutesBetween_(tm,existing.out);
+    updateByKey_(sh,'date',existing.date,patch);
   } else {
     if(!existing.in) throw new Error('Pehle IN Time enter karein.');
-    if(existing.out) throw new Error('Is date ka OUT Time already recorded hai.');
     const officeMinutes=minutesBetween_(existing.in,tm);
     if(officeMinutes<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
     updateByKey_(sh,'date',existing.date,{out:tm,officeMinutes:officeMinutes,status:'PRESENT'});

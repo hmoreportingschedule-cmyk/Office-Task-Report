@@ -68,3 +68,6 @@
 .link-button{background:none;border:0;padding:0;color:var(--accent,#176b5d);font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000}.profile-modal{width:min(680px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:20px;box-shadow:0 24px 70px rgba(15,23,42,.22);padding:22px}.modal-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}.modal-head h3{margin:0}.modal-head p{margin:4px 0 0;color:#64748b}.profile-modal .profile-head{margin-bottom:20px}@media(max-width:700px){.profile-modal{padding:16px;border-radius:16px}.modal-backdrop{padding:10px}}
 .profile-note{display:block;margin-top:7px;color:#6b7f7a;font-size:11px}
 .admin-photo-upload{box-shadow:0 1px 4px rgba(15,118,110,.22)}
+
+/* V.54 Attendance two-part layout + fast sync */
+.attendance-two-part{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:18px;align-items:start}.attendance-two-part .panel{min-width:0}.recent-attendance-panel{overflow:hidden}.recent-attendance-panel .table-wrap{max-height:420px;overflow:auto}.recent-attendance-panel table{min-width:640px}@media(max-width:900px){.attendance-two-part{grid-template-columns:1fr}}

@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.53
+// Office Task Report V.54
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -235,8 +235,8 @@ function Attendance({session,notify}) {
   };
 
   const downloadFormat=(type)=>{
-    const headers=["employeeId","date","in","out","officeMinutes","breakMinutes","status"];
-    const sample=[[session.code||"12345",attendanceDate||new Date().toISOString().slice(0,10),"09:30:00","18:00:00","510","30","PRESENT"]];
+    const headers=["Employee Id","Date","In Time","Out Time","Status","Approve/Not Approve"];
+    const sample=[[session.code||"12345",attendanceDate||new Date().toISOString().slice(0,10),"09:30 AM","07:00 PM","Present","Approve"]];
     if(type==="csv"){
       const csv=[headers.join(","),...sample.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");
       const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const a=document.createElement("a");
@@ -254,14 +254,15 @@ function Attendance({session,notify}) {
       const sheet=wb.Sheets[wb.SheetNames[0]]; const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
       if(!rows.length)throw new Error("Excel/CSV file mein koi record nahi mila.");
       const result=await api("importAttendance",{session,rows}); setImportResult(result);
-      notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete.`); await load();
+      notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete. Employee sync done.`); await load();
     }catch(err){notify("error",err.message);setImportResult({errors:[err.message]});}
     finally{setImportBusy(false);if(fileRef.current)fileRef.current.value="";}
   };
 
   const selectedRule=data?.editableDates?.find(x=>x.date===attendanceDate);
+  const oldestEditable=data?.editableDates?.[data?.editableDates?.length-1]?.date||"";
   return <div>
-    <PageHead title="Attendance" subtitle="IN / OUT time manually add karein. Sirf Today aur Previous 1 Day allowed hai."
+    <PageHead title="Attendance" subtitle="IN / OUT time manually add karein. Aaj aur previous dates allowed hain; future date allowed nahi hai."
       action={<div className="top-actions-inline"><button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button></div>}/>
 
     {isAdmin && <section className="panel attendance-import-panel">
@@ -278,25 +279,26 @@ function Attendance({session,notify}) {
       {importResult?.errors?.length>0 && <div className="import-errors">{importResult.errors.slice(0,8).map((x,i)=><div key={i}>{x}</div>)}</div>}
     </section>}
 
-    <section className="panel manual-attendance-panel">
-      <PanelTitle title="Manual Attendance" action={<span className="muted">No future date</span>}/>
-      <div className="form-grid compact-form">
-        <label>Attendance Date
-          <input type="date" value={attendanceDate} min={data?.editableDates?.[data?.editableDates?.length-1]?.date||""} max={data?.editableDates?.[0]?.date||""} onChange={e=>selectDate(e.target.value)} disabled={busy} required/>
-        </label>
-        <label>IN Time
-          <input type="time" value={inTime} onChange={e=>setInTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
-        </label>
-        <label>OUT Time
-          <input type="time" value={outTime} onChange={e=>setOutTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
-        </label>
-        <div className="assign-note full-span"><Clock3 size={15}/> Office Time: <b>{data?.settings?.officeInTime||"--:--"}</b> to <b>{data?.settings?.officeOutTime||"--:--"}</b> · Weekoff: <b>{data?.settings?.weekoffLabel||"Default"}</b></div>
-        {selectedRule?.nonWorking && <div className="assign-note full-span">{selectedRule.reason || "Leave / Weekoff / Weekoff Adjustment"}. Attendance select karne ki zarurat nahi hai.</div>}
-        <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
-      </div>
-    </section>
-
-    <section className="panel"><PanelTitle title="Recent Attendance"/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status])}/>}</section>
+    <div className="attendance-two-part">
+      <section className="panel manual-attendance-panel">
+        <PanelTitle title="Manual Attendance" action={<span className="muted">No future date</span>}/>
+        <div className="form-grid compact-form">
+          <label>Attendance Date
+            <input type="date" value={attendanceDate} min={oldestEditable} max={new Date().toISOString().slice(0,10)} onChange={e=>selectDate(e.target.value)} disabled={busy} required/>
+          </label>
+          <label>IN Time
+            <input type="time" value={inTime} onChange={e=>setInTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
+          </label>
+          <label>OUT Time
+            <input type="time" value={outTime} onChange={e=>setOutTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
+          </label>
+          <div className="assign-note full-span"><Clock3 size={15}/> Office Time: <b>{data?.settings?.officeInTime||"--:--"}</b> to <b>{data?.settings?.officeOutTime||"--:--"}</b> · Weekoff: <b>{data?.settings?.weekoffLabel||"Default"}</b></div>
+          {selectedRule?.nonWorking && <div className="assign-note full-span">{selectedRule.reason || "Leave / Weekoff / Weekoff Adjustment"}. Attendance select karne ki zarurat nahi hai.</div>}
+          <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
+        </div>
+      </section>
+      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status,r.approveStatus||"NOT APPROVE"])}/>}</section>
+    </div>
   </div>
 }
 
@@ -608,7 +610,7 @@ function SettingsPage({session,notify}){
   useEffect(()=>{load()},[]);
   const install=async()=>{setBusy(true);try{await api("installAutomation",{session});notify("success","Hourly automation enabled.");load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const run=async()=>{setBusy(true);try{const r=await api("runAutomation",{session});notify("success",`Automation run: ${r.reminders||0} reminders, ${r.approvals||0} approvals.`);load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
-  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.53</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
+  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.54</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
 }
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
