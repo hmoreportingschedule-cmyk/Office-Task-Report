@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX_LIBRARY from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.85
+// Office Task Report V.86
 // Browser requests stay same-origin and go through the Cloudflare Worker.
 // The Worker follows the Apps Script ContentService redirect server-side, so
 // the browser never talks directly to script.google.com/googleusercontent.com.
@@ -162,7 +162,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.85</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.86</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -518,7 +518,7 @@ function Templates({session,notify}) {
     if(!assign.templateId || !assign.username){notify("error","Template aur Employee/HOD select karein.");return;}
     try{
       const r=await api("assignTemplate",{session,templateId:assign.templateId,username:assign.username,month:Number(assign.month),year:Number(assign.year),fromDay:Number(assign.fromDay),toDay:Number(assign.toDay)});
-      notify("success",`Template ${r.name} ko ${r.fromDay}-${r.toDay}/${r.month}/${r.year} ke liye ${r.count} daily task(s) assign ho gaye.`);
+      notify("success",`Template ${r.name} ko ${r.fromDay}-${r.toDay}/${r.month}/${r.year} ke liye ek task assign ho gaya.`);
       setAssign({...assign,templateId:"",username:""});
     }catch(e){notify("error",e.message)}
   };
@@ -759,7 +759,7 @@ function SettingsPage({session,notify}){
   useEffect(()=>{load()},[]);
   const install=async()=>{setBusy(true);try{await api("installAutomation",{session});notify("success","Hourly automation enabled.");load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const run=async()=>{setBusy(true);try{const r=await api("runAutomation",{session});notify("success",`Automation run: ${r.reminders||0} reminders, ${r.approvals||0} approvals.`);load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
-  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.85</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
+  return <div><PageHead title="Settings & Automation" subtitle="System configuration, performance and scheduled automation."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Cloudflare Worker / same-origin API + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.86</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year. Next year is created automatically when accessed.</p></div><span className="tag">Jan–Dec</span></div><div className="setting-row"><div><b>Automation</b><p>Hourly pending-task, approval reminders and yearly rollover checks.</p><small>Status: {auto?.enabled?"Enabled":"Not Enabled"}{auto?.lastRun?` · Last run ${auto.lastRun}`:""}</small></div><div className="table-actions"><button className="secondary" onClick={run} disabled={busy||!auto}>Run Now</button>{isMaster&&<button className="primary" onClick={install} disabled={busy}>{auto?.enabled?"Reinstall Hourly Trigger":"Enable Hourly Automation"}</button>}</div></div></section></div>
 }
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}

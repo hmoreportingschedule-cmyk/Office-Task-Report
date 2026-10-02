@@ -6,7 +6,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/office-task") {
       if (request.method === "OPTIONS") return new Response(null,{status:204,headers:corsHeaders()});
-      if (request.method === "GET" && url.searchParams.get("health") === "1") return json({ok:true,app:"Office Task Report",worker:"V.85",proxy:true,appsScript:APPS_SCRIPT_URL});
+      if (request.method === "GET" && url.searchParams.get("health") === "1") return json({ok:true,app:"Office Task Report",worker:"V.86",proxy:true,appsScript:APPS_SCRIPT_URL});
       if (request.method !== "POST") return json({ok:false,message:"Method not allowed. Use POST."},405);
       try {
         const body=await request.text();

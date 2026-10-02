@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.85
+ * OFFICE TASK REPORT V.86
  * Google Apps Script backend
  *
  * Architecture:
@@ -26,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.85',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.86',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.85',
+      version:'V.86',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.85',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.86',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -1189,10 +1189,12 @@ function assignTask_(s,t) {
   if(!t || !t.username || !t.name) throw new Error('Employee aur Task Name required hain.');
   const user=findUser_(t.username); if(!user || String(user.status||'ACTIVE')!=='ACTIVE') throw new Error('Selected employee is not active.');
   if(!['EMPLOYEE','HOD'].includes(String(user.role))) throw new Error('Task sirf Employee/HOD ko assign kiya ja sakta hai.');
-  const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const date=normalizeAttendanceDate_(t.date)||Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   const due=normalizeAttendanceDate_(t.due)||date;
+  if(due<date) throw new Error('Task To Date, From Date se pehle nahi ho sakti.');
+  const taskYear=Number(String(due).slice(0,4))||Number(String(date).slice(0,4));
+  const file=getEmployeeFile_(user,taskYear), sh=file.getSheetByName('Tasks');
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const taskId=Utilities.getUuid();
   appendObject_(sh,{id:taskId,date:date,name:String(t.name).trim(),details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:due,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date(),approvalStatus:'Not Approve',approvedBy:'',approvedAt:''});
   appendActivity_(file,user,'Task Assigned',`${t.name} · due ${due}`);

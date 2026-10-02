@@ -40,7 +40,10 @@ if(!/export\s+default\s+async\s+function\s+handler/.test(apiProxy)) throw new Er
 if(/module\.exports\s*=/.test(apiProxy)) throw new Error('CommonJS module.exports is not allowed in api/office-task.js under type=module.');
 if((code.match(/case\s+['"]setRamadanBreakFreeze['"]/g)||[]).length!==1) throw new Error('setRamadanBreakFreeze route must exist exactly once.');
 if(!code.includes('function getEmployeeFileForDate_')) throw new Error('Date-aware employee file helper missing.');
+if(!code.includes('function formatAttendanceDate_')) throw new Error('Attendance date formatter helper missing.');
+if(!/function assignTask_[\s\S]*?getEmployeeFile_\(user,taskYear\)/.test(code)) throw new Error('assignTask_ must resolve the employee yearly file from the task date/year.');
+if(!/if\(due<date\) throw new Error/.test(code)) throw new Error('assignTask_ must reject a To Date earlier than From Date.');
 if(!code.includes('const existingEmail=')) throw new Error('Profile email preservation guard missing.');
-if(!/V\.85/.test(code)||!/V\.85/.test(worker)||!/V\.85/.test(main)) throw new Error('V.85 version markers are inconsistent.');
+if(!/V\.86/.test(code)||!/V\.86/.test(worker)||!/V\.86/.test(main)) throw new Error('V.86 version markers are inconsistent.');
 if(/V\.(?:7[0-9]|8[0-4])/.test(code+'\n'+worker+'\n'+main)) throw new Error('Stale production version marker found in source.');
 console.log(`Prebuild check passed: ${new Set(frontend).size} frontend API actions match Code.gs; Cloudflare, build, version and regression checks passed.`);
