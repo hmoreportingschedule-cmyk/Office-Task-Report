@@ -8,7 +8,7 @@ import {
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import "./styles.css";
 
-// Office Task Report V.72
+// Office Task Report V.74
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -17,7 +17,10 @@ const API_URL = "/api/office-task";
 
 let XLSX_MODULE=null;
 async function getXLSX(){
-  if(!XLSX_MODULE) const mod=await import("xlsx"); XLSX_MODULE=mod.default||mod;
+  if(!XLSX_MODULE){
+    const mod=await import("xlsx");
+    XLSX_MODULE=mod.default||mod;
+  }
   return XLSX_MODULE;
 }
 
@@ -154,7 +157,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.65</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.74</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -418,7 +421,7 @@ function Profile({session,notify}) {
   useEffect(()=>{load()},[]);
   const changePassword=async(e)=>{e.preventDefault();if(pwd.newPassword!==pwd.confirm){notify("error","New password aur confirm password same hona chahiye.");return}try{await api("changePassword",{session,currentPassword:pwd.currentPassword,newPassword:pwd.newPassword});notify("success","Password successfully change ho gaya.");setPwd({currentPassword:"",newPassword:"",confirm:""})}catch(e){notify("error",e.message)}};
   const saveContact=async(e)=>{e.preventDefault();try{await api("profileUpdate",{session,profile:contact});notify("success","Mobile Number aur Email Id update ho gaya.");load()}catch(e){notify("error",e.message)}};
-  const uploadOwnPhoto=async(e)=>{const f=e.target.files?.[0]; if(!f)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>5*1024*1024){notify("error","Photo 5 MB se chhoti honi chahiye.");e.target.value="";return} try{setPhotoBusy(true);const photo=await compressProfilePhoto(f);const r=await api("uploadProfilePhoto",{session,targetUsername:session.username,...photo});setData(d=>({...d,photoUrl:r.photoUrl,photoDataUrl:r.photoDataUrl,photoPath:r.photoPath}));notify("success","Profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{setPhotoBusy(false);e.target.value=""}};
+  const uploadOwnPhoto=async(e)=>{const f=e.target.files?.[0]; if(!f)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>5*1024*1024){notify("error","Photo 5 MB se chhoti honi chahiye.");e.target.value="";return} try{setPhotoBusy(true);const photo=await compressProfilePhoto(f);const r=await api("profileUpdate",{session,profile:{photoDataUrl:photo.photoDataUrl,photoFileName:photo.photoFileName,photoMimeType:photo.photoMimeType}});setData(d=>({...d,photoUrl:r.photoUrl||d.photoUrl,photoDataUrl:r.photoDataUrl||photo.photoDataUrl,photoPath:r.photoPath||d.photoPath}));notify("success","Profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{setPhotoBusy(false);e.target.value=""}};
   if(busy&&!data)return <Loader text="Loading profile…"/>;
   return <div><PageHead title="My Profile" subtitle="Apni profile details dekhein aur allowed information update karein." action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/>
     <div className="two-col">
@@ -567,7 +570,7 @@ function Templates({session,notify}) {
               {users.map(u=><option key={u.username} value={u.username}>{u.name} · {u.role} · {u.employeeCode}</option>)}
             </select>
           </label>
-          <div className="assign-note full-span">Month/Year aur Date To Date select karke task assign karein. Har selected date ke liye task create hoga; poore saal automatically repeat nahi hoga.</div>
+          <div className="assign-note full-span">Month/Year aur Date To Date select karke ek hi task period assign karein. Task poore selected period ke liye rahega; poore saal automatically repeat nahi hoga.</div>
           <button className="primary full-span"><CheckCircle2 size={16}/> Assign for Selected Period</button>
         </form>
         <div className="section-divider"/>
