@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX_LIBRARY from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.81
+// Office Task Report V.83
 // Browser requests stay same-origin and go through the Cloudflare Worker.
 // The Worker follows the Apps Script ContentService redirect server-side, so
 // the browser never talks directly to script.google.com/googleusercontent.com.
@@ -722,7 +722,6 @@ function RequestsCenter({session,notify}) {
   const delHoliday=async(id)=>{if(!window.confirm("Is holiday ko delete karna hai?"))return;try{await api("deleteHoliday",{session,id});notify("success","Holiday delete ho gayi.");load()}catch(e){notify("error",e.message)}};
   const saveWeekoff=async()=>{try{await api("saveWeekoff",{session,day:weekoff});notify("success","Weekoff setting save ho gayi.")}catch(e){notify("error",e.message)}};
   const approve=async(id,status)=>{try{await api("approvalAction",{session,id,status});notify("success",`Request ${status.toLowerCase()} ho gayi.`);load()}catch(e){notify("error",e.message)}};
-  const exportRequests=()=>{const rows=data.requests||[];const csv=["Type,Date,Details,Status,Created At",...rows.map(r=>[r.type,r.date,r.details,r.status,r.createdAt].map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(","))].join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="My_Requests.csv";a.click();};
   return <div>
     <PageHead title="Requests & Advanced" subtitle="Leave, attendance correction, schedule requests, holidays and advanced controls." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
     <div className="two-col">

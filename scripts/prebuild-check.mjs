@@ -10,6 +10,13 @@ const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const wrangler=fs.readFileSync(path.join(root,'wrangler.toml'),'utf8');
 if(/\b(?:if|for|while)\s*\([^\n)]*\)\s+(?:const|let|var)\b/.test(main)) throw new Error('Unsafe declaration in single-statement context detected in src/main.jsx.');
 if(/import\s*\(\s*["']xlsx["']\s*\)/.test(main)) throw new Error('Dynamic XLSX import detected.');
+const saveAttendanceBlock = (code.match(/function saveAttendance_\([\s\S]*?\n\}\n\nfunction punch_/) || [])[0] || '';
+if(saveAttendanceBlock.includes('incoming[i-1]') && !/const\s+incoming\s*=/.test(saveAttendanceBlock)) throw new Error('saveAttendance_ uses incoming breaks without declaring incoming.');
+const declaredFns = new Set([...code.matchAll(/function\s+([A-Za-z0-9_$]+)\s*\(/g)].map(m=>m[1]));
+const underscoreCalls = new Set([...code.matchAll(/\b([A-Za-z_$][A-Za-z0-9_$]*_)\s*\(/g)].map(m=>m[1]));
+const undefinedHelpers = [...underscoreCalls].filter(name => !declaredFns.has(name));
+if(undefinedHelpers.length) throw new Error(`Undefined Apps Script helper/function reference(s): ${undefinedHelpers.join(', ')}`);
+
 if(code.includes('break3NamazType')) throw new Error('Unexpected break3NamazType column regression detected.');
 if(code.includes('3 Din Qafila')) throw new Error('Unexpected 3 Din Qafila task category regression detected.');
 const frontend=[...main.matchAll(/api\(\s*["']([^"']+)["']/g)].map(m=>m[1]);

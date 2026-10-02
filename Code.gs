@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.81
+ * OFFICE TASK REPORT V.83
  * Google Apps Script backend
  *
  * Architecture:
@@ -26,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.81',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.83',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.81',
+      version:'V.83',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.81',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.83',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -951,6 +951,7 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
   if(finalIn&&finalOut) patch.officeMinutes=calculateOfficeMinutes_(finalIn,finalOut);
   if(finalIn) patch.status='PRESENT';
   const hasBreakPayload=Array.isArray(breaks);
+  const incoming=hasBreakPayload ? breaks : [];
   const frozenLunch=String((readRows_(master_().getSheetByName('SystemSettings')).find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE';
   let breakTotal=(hasBreakPayload && frozenLunch)?minutesBetween_(normalizeTime_(existing.break3Start),normalizeTime_(existing.break3End)):0;
   for(let i=1;i<=3;i++){
@@ -1152,7 +1153,7 @@ function taskAction_(s,id,type,progress,note,minutes) {
     const endDate=normalizeAttendanceDate_(row.assignmentTo||row.due||row.date);
     const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
     if(endDate && today<endDate) throw new Error(`Task ${endDate} se pehle complete nahi ki ja sakti.`);
-    const actual=row.startTime?Math.max(0,Math.round((now-new Date(row.startTime))/60000)):Number(row.actualMinutes||0);
+    const actual=Number(row.actualMinutes||0);
     updateByKey_(sh,'id',id,{status:'COMPLETED',completedTime:time,actualMinutes:actual,progress:100,updatedAt:now});
   } else if(action==='SAVE_TIME') {
     const n=Number(minutes||0); if(!Number.isFinite(n)||n<=0||n>1440) throw new Error('Valid task minutes add karein (1-1440).');
@@ -2241,6 +2242,13 @@ function assertAdmin_(s){if(!['MASTER_ADMIN','ADMIN','HOD'].includes(s.role))thr
 function audit_(s,action,module,details){const sh=master_().getSheetByName('AuditLog');sh.appendRow([new Date(),s.username,action,module,details])}
 function hash_(x){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,String(x),Utilities.Charset.UTF_8).map(b=>((b+256)%256).toString(16).padStart(2,'0')).join('')}
 function formatTime_(d){return Utilities.formatDate(d,Session.getScriptTimeZone(),'HH:mm:ss')}
+function formatAttendanceDate_(dateStr){
+  const d=normalizeAttendanceDate_(dateStr);
+  if(!d) return String(dateStr||'');
+  const parts=d.split('-');
+  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
 function formatDateTime_(d){return Utilities.formatDate(new Date(d),Session.getScriptTimeZone(),'yyyy-MM-dd HH:mm:ss')}
 function minutesBetween_(a,b){if(!a||!b)return 0;const [ah,am,as]=a.split(':').map(Number),[bh,bm,bs]=b.split(':').map(Number);return Math.max(0,(bh*60+bm+bs/60)-(ah*60+am+as/60))}
 function json_(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON)}
