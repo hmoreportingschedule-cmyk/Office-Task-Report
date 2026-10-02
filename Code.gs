@@ -15,8 +15,8 @@ const MASTER_SHEETS_SCHEMA_VERSION = 'V74_MASTER_MINIMAL';
 const CONFIG = {
   MASTER_NAME: 'office-task-report',
   MASTER_FOLDER_PATH: ['Dashboard Working','office-task-report'],
-  EMPLOYEE_FOLDER: 'Employees Task Files',
-  PHOTO_FOLDER: 'Employees Photo',
+  EMPLOYEE_FOLDER: 'Office Task Report - Employee Files',
+  PHOTO_FOLDER: 'Office Task Report - Photos',
   YEARLY_SHEETS: ['Profile','Attendance','Tasks','Requests','Activities'],
   DEFAULT_ADMIN: {username:'admin', password:'Admin@123', name:'Master Admin', role:'MASTER_ADMIN'}
 };
