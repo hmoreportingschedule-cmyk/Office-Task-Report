@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.51
+ * OFFICE TASK REPORT V.62
  * Google Apps Script backend
  *
  * Architecture:
@@ -8,7 +8,7 @@
  * Example: Asif_12345_2026
  */
 
-const USERS_SCHEMA_VERSION = 'V51_CUMULATIVE';
+const USERS_SCHEMA_VERSION = 'V62_CUMULATIVE';
 
 const CONFIG = {
   MASTER_NAME: 'office-task-report',
@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.61',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.62',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.61',
+      version:'V.62',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.61',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.62',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -348,14 +348,14 @@ function route_(action,b) {
     case 'login': return login_(b.username,b.password);
     case 'health': return health_();
     case 'dashboard': return dashboard_(b.session);
-    case 'attendance': return attendance_(b.session,b.month,b.year);
+    case 'attendance': return attendance_(b.session,b.month,b.year,b.since);
     case 'importAttendance': return importAttendance_(b.session,b.rows);
     case 'punch': return punch_(b.session,b.type,b.date,b.time);
     case 'saveAttendance': return saveAttendance_(b.session,b.date,b.inTime,b.outTime,b.breaks);
     case 'saveBreak': return saveBreak_(b.session,b.date,b.breakNo,b.breakType,b.namazType,b.startTime,b.endTime,b.reason);
     case 'notes': return notes_(b.session);
     case 'saveNote': return saveNote_(b.session,b.note);
-    case 'tasks': return tasks_(b.session);
+    case 'tasks': return tasks_(b.session,b.month,b.year,b.since);
     case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes);
     case 'assignTask': return assignTask_(b.session,b.task);
     case 'taskProgress': return taskProgress_(b.session,b.taskId,b.progress,b.note);
@@ -364,7 +364,7 @@ function route_(action,b) {
     case 'createTemplate': return createTemplate_(b.session,b.template);
     case 'updateTemplate': return updateTemplate_(b.session,b.template);
     case 'deleteTemplate': return deleteTemplate_(b.session,b.templateId);
-    case 'assignTemplate': return assignTemplate_(b.session,b.templateId,b.username);
+    case 'assignTemplate': return assignTemplate_(b.session,b.templateId,b.username,b.month,b.year,b.fromDay,b.toDay);
     case 'employees': return employees_(b.session);
     case 'createEmployee': return createEmployee_(b.session,b.employee);
     case 'updateEmployee': return updateEmployee_(b.session,b.employee);
@@ -386,6 +386,7 @@ function route_(action,b) {
     case 'createHoliday': return createHoliday_(b.session,b.holiday);
     case 'deleteHoliday': return deleteHoliday_(b.session,b.id);
     case 'saveWeekoff': return saveWeekoff_(b.session,b.day);
+    case 'setRamadanBreakFreeze': return setRamadanBreakFreeze_(b.session,b.frozen);
     case 'createRequest': return createRequest_(b.session,b.request);
     case 'auditLog': return auditLog_(b.session);
     default: throw new Error('Unknown action: '+action);
@@ -573,9 +574,9 @@ function dashboard_(s) {
   return {kpis:{present:att.filter(r=>r.date===today && r.status==='PRESENT').length,myTasks:myToday.length,completed,pending},trend,activities,reminders};
 }
 
-function attendance_(s,month,year) {
+function attendance_(s,month,year,since) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), attSh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const rows=readRows_(attSh);
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
@@ -601,12 +602,50 @@ function attendance_(s,month,year) {
     const m=String(r.date||'').match(/^(\d{4})-(\d{2})-/);
     return m && Number(m[1])===selectedYear && Number(m[2])===selectedMonth;
   }).sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
+  const breakAlerts=[];
+  filteredRows.forEach(function(r){
+    for(let i=1;i<=3;i++){
+      const type=String(r[`break${i}Type`]||'').trim();
+      const namaz=String(r[`break${i}NamazType`]||'').trim();
+      const startT=normalizeTime_(r[`break${i}Start`]), endT=normalizeTime_(r[`break${i}End`]);
+      if(!startT||!endT) continue;
+      let max=0, label=type;
+      if(type==='Lunch'){max=25; label='Lunch Time';}
+      else if(type==='Namaz' && namaz==='Asr'){max=25; label='Namaz - Asr';}
+      else if(type==='Namaz' && namaz==='Magrib'){max=25; label='Namaz - Magrib';}
+      else if(type==='Namaz' && namaz==='Zohar'){max=20; label='Namaz - Zohar';}
+      else if(type==='Namaz' && namaz==='Juma'){max=60; label='Namaz - Juma';}
+      else if(type==='Namaz' && namaz==='Zohar / Juma'){
+        const dow=new Date(r.date+'T00:00:00').getDay();
+        max=dow===5?60:20; label=dow===5?'Namaz - Juma':'Namaz - Zohar';
+      }
+      if(max>0){
+        const actual=minutesBetween_(startT,endT);
+        if(actual>max) breakAlerts.push({date:r.date,breakNo:i,type:label,allowedMinutes:max,actualMinutes:actual,excessMinutes:actual-max});
+      }
+    }
+  });
+  const sys=master_().getSheetByName('SystemSettings');
+  const sysRows=readRows_(sys);
+  const break3Frozen=String((sysRows.find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE';
   return {
+    break3Frozen:break3Frozen,
     today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:t.officeMinutes||0,breakMinutes:t.breakMinutes||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
-    rows:filteredRows.slice().reverse(),
+    rows:(function(){
+      if(!since) return filteredRows.slice().reverse();
+      const sinceDate=new Date(String(since));
+      if(isNaN(sinceDate.getTime())) return filteredRows.slice().reverse();
+      return filteredRows.filter(function(r){
+        const u=new Date(String(r.updatedAt||''));
+        return !isNaN(u.getTime()) && u.getTime()>sinceDate.getTime();
+      }).slice().reverse();
+    })(),
+    incremental:!!since,
     selectedMonth:selectedMonth,
     selectedYear:selectedYear,
     editableDates:editableDates,
+    breakAlerts:breakAlerts.slice().reverse(),
+    syncAt:new Date().toISOString(),
     settings:{officeInTime:(rosterToday&&rosterToday.officeInTime)||office.officeInTime||'',officeOutTime:(rosterToday&&rosterToday.officeOutTime)||office.officeOutTime||'',weekoffLabel:weekDayName_(rules.weekoff),roster:{today:rosterToday||null,yesterday:rosterYesterday||null}}
   };
 }
@@ -651,7 +690,7 @@ function importAttendance_(s, inputRows) {
       const group = groups[code], user = group.user;
       const file = getEmployeeFile_(user);
       const sh = file.getSheetByName('Attendance');
-      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','status','approveStatus']);
+      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
       const range = sh.getDataRange();
       const values = range.getValues();
       const headers = values.shift().map(String);
@@ -673,7 +712,8 @@ function importAttendance_(s, inputRows) {
           if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = r.officeMinutes === '' ? calculateOfficeMinutes_(r.in,r.out) : Number(r.officeMinutes || 0);
           if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? calculateBreakMinutesFromRow_(r) : Number(r.breakMinutes || 0);
           if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : ''));
-          if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'NOT APPROVE';
+          if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'Not Approve';
+          if (idx.updatedAt !== undefined) row[idx.updatedAt] = new Date();
           values.push(row);
           byDate[r.date] = {row:row,index:values.length-1};
           added++;
@@ -699,6 +739,7 @@ function importAttendance_(s, inputRows) {
         fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : '')));
         if (idx.approveStatus !== undefined && r.approveStatus === 'Approve' && String(row[idx.approveStatus]||'').trim().toUpperCase() !== 'APPROVE') { row[idx.approveStatus]='Approve'; changed=true; }
         else fillBlank('approveStatus', r.approveStatus);
+        if (changed && idx.updatedAt !== undefined) row[idx.updatedAt]=new Date();
         if (changed) updated++; else skipped++;
       });
 
@@ -823,26 +864,41 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
   if(!tmIn && !tmOut) throw new Error('IN Time ya OUT Time enter karein.');
   if(tmOut && !tmIn) throw new Error('Pehle IN Time enter karein.');
   if(tmIn && tmOut && minutesBetween_(tmIn,tmOut)<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
-  if(!existing){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}); existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}; }
+  if(!existing){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}); existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}; }
   const patch={}; if(tmIn) patch.in=tmIn; if(tmOut) patch.out=tmOut;
   const finalIn=tmIn||normalizeTime_(existing.in), finalOut=tmOut||normalizeTime_(existing.out);
   if(finalIn&&finalOut) patch.officeMinutes=calculateOfficeMinutes_(finalIn,finalOut);
   if(finalIn) patch.status='PRESENT';
   const incoming=Array.isArray(breaks)?breaks:[]; let breakTotal=0;
+  const frozenLunch=String((readRows_(master_().getSheetByName('SystemSettings')).find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE';
   for(let i=1;i<=3;i++){
-    const b=incoming[i-1]||{}; const has=!!(b.type||b.start||b.end||b.reason||b.namazType); if(!has) continue;
-    const type=String(b.type||'').trim(), start=normalizeTime_(b.start), end=normalizeTime_(b.end);
-    if(!type) throw new Error(`Break ${i}: Break Type select karein.`);
+    const b=incoming[i-1]||{};
+    const start=normalizeTime_(b.start), end=normalizeTime_(b.end);
+    const has=!!(start||end||b.namazType);
+    if(i===3 && frozenLunch){
+      if(has) throw new Error('Ramadan Lunch Break abhi Admin ne freeze kiya hua hai.');
+      patch.break3Type=''; patch.break3NamazType=''; patch.break3Start=''; patch.break3End=''; patch.break3Reason='';
+      continue;
+    }
+    if(!has){
+      patch[`break${i}Type`]=''; patch[`break${i}NamazType`]=''; patch[`break${i}Start`]=''; patch[`break${i}End`]=''; patch[`break${i}Reason`]='';
+      continue;
+    }
     if(!start||!end) throw new Error(`Break ${i}: Start aur End Time dono select karein.`);
     if(minutesBetween_(start,end)<=0) throw new Error(`Break ${i}: End Time, Start Time ke baad hona chahiye.`);
-    if(type==='Namaz'&&!String(b.namazType||'').trim()) throw new Error(`Break ${i}: Namaz ka type select karein.`);
-    if(type==='Other'&&!String(b.reason||'').trim()) throw new Error(`Break ${i}: Other break ke liye reason likhein.`);
-    if(i>1){ const prev=incoming[i-2]||{}; if(!(prev.type&&prev.start&&prev.end)) throw new Error(`Break ${i-1} pehle complete karein.`); }
-    const prefix=`break${i}`; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(b.namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(b.reason||''); breakTotal+=minutesBetween_(start,end);
+    let type=i===3?'Lunch':'Namaz';
+    let namaz=String(b.namazType||'').trim();
+    if(i===1 && !['Zohar','Juma'].includes(namaz)) throw new Error('Break 1 mein Zohar ya Juma select karein.');
+    if(i===2 && !['Asr','Magrib'].includes(namaz)) throw new Error('Break 2 mein Asr ya Magrib select karein.');
+    if(i===3) namaz='';
+    const prefix=`break${i}`;
+    patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=namaz; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]='';
+    breakTotal+=minutesBetween_(start,end);
   }
-  if(incoming.length && breakTotal>=0) patch.breakMinutes=Math.round(breakTotal);
+  patch.breakMinutes=Math.round(breakTotal);
+  patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
   appendActivity_(f,user,'Attendance',`Attendance saved for ${date}`);
   const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||''))&&String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
@@ -861,7 +917,7 @@ function punch_(s,type,dateStr,timeStr) {
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const rows=readRows_(sh);
   let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
@@ -892,7 +948,7 @@ function punch_(s,type,dateStr,timeStr) {
 
 function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reason){
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const date=normalizeAttendanceDate_(dateStr); if(!date) throw new Error('Valid attendance date select karein.');
   const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'); if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const n=Number(breakNo); if(![1,2,3].includes(n)) throw new Error('Maximum 3 breaks allowed hain.');
@@ -902,11 +958,11 @@ function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reas
   if(type==='Namaz' && !String(namazType||'').trim()) throw new Error('Namaz ka type select karein.');
   if(type==='Other' && !String(reason||'').trim()) throw new Error('Other break ke liye reason likhein.');
   const rows=readRows_(sh); let row=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
-  if(!row){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}); row={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}; }
+  if(!row){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}); row={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}; }
   for(let i=1;i<n;i++) if(!row[`break${i}End`]) throw new Error(`Break ${i} pehle complete karein.`);
   const prefix=`break${n}`;
   const oldMinutes=[1,2,3].reduce((sum,i)=>sum+minutesBetween_(row[`break${i}Start`],row[`break${i}End`]),0);
-  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins;
+  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins; patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
   appendActivity_(f,user,'Attendance Break',`${type}${namazType?` (${namazType})`:''} · ${start}-${end} · ${date}`);
   return {date,breakNo:n,breakType:type,namazType:namazType||'',startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
@@ -936,14 +992,21 @@ function normalizeTime_(value){
   return String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0')+':'+String(sec).padStart(2,'0');
 }
 
-function tasks_(s) {
+function tasks_(s,month,year,since) {
   const user=findUser_(s.username), rows=readRows_(getEmployeeFile_(user).getSheetByName('Tasks'));
-  return {rows:rows.slice().reverse()};
+  const m=month?Number(month):0, y=year?Number(year):0;
+  const filtered=(m&&y)?rows.filter(r=>{const d=normalizeAttendanceDate_(r.date);return d&&Number(d.slice(5,7))===m&&Number(d.slice(0,4))===y;}):rows;
+  let out=filtered;
+  if(since){
+    const sd=new Date(String(since));
+    if(!isNaN(sd.getTime())) out=filtered.filter(r=>{const u=new Date(String(r.updatedAt||''));return !isNaN(u.getTime())&&u.getTime()>sd.getTime();});
+  }
+  return {rows:out.slice().reverse(),incremental:!!since,month:m||null,year:y||null,syncAt:new Date().toISOString()};
 }
 
 function taskAction_(s,id,type,progress,note,minutes) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt']);
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id));
   if(!row) throw new Error('Task not found.');
   const now=new Date(), time=formatDateTime_(now), action=String(type||'').toUpperCase();
@@ -967,7 +1030,7 @@ function assignTask_(s,t) {
   const user=findUser_(t.username); if(!user || String(user.status||'ACTIVE')!=='ACTIVE') throw new Error('Selected employee is not active.');
   if(!['EMPLOYEE','HOD'].includes(String(user.role))) throw new Error('Task sirf Employee/HOD ko assign kiya ja sakta hai.');
   const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt']);
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
   const date=normalizeAttendanceDate_(t.date)||Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   const due=normalizeAttendanceDate_(t.due)||date;
   const taskId=Utilities.getUuid();
@@ -1061,7 +1124,7 @@ function deleteTemplate_(s,templateId) {
   throw new Error('Template not found.');
 }
 
-function assignTemplate_(s,templateId,username) {
+function assignTemplate_(s,templateId,username,month,year,fromDay,toDay) {
   assertAdmin_(s);
   if(!templateId || !username) throw new Error('Template aur Employee/HOD select karein.');
   const tRows=readRows_(master_().getSheetByName('Templates'));
@@ -1070,16 +1133,32 @@ function assignTemplate_(s,templateId,username) {
   const user=findUser_(username);
   if(!user || user.status!=='ACTIVE') throw new Error('Selected Employee/HOD is not active.');
   if(!['EMPLOYEE','HOD'].includes(String(user.role))) throw new Error('Template sirf Employee ya HOD ko assign kiya ja sakta hai.');
-  const file=getEmployeeFile_(user);
-  const sh=file.getSheetByName('Tasks');
-  const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
-  const taskId=Utilities.getUuid();
-  appendObject_(sh,{id:taskId,date:today,name:t.name,details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:today,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,expectedMinutes:'',progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date()});
-  appendActivity_(file,user,'Task Assigned',`${t.name} · ${t.category||''}`);
-  const nSh=master_().getSheetByName('Notifications');
-  appendObject_(nSh,{id:Utilities.getUuid(),username:user.username,title:'New Task Assigned',message:`${t.name} task aapko assign ki gayi hai.`,type:'TASK',time:new Date(),read:'NO'});
-  audit_(s,'ASSIGN','TEMPLATE',`${t.name} → ${user.name} (${user.username})`);
-  return {taskId,username:user.username,name:user.name};
+  const m=Number(month), y=Number(year);
+  if(!Number.isInteger(m)||m<1||m>12) throw new Error('Valid month select karein.');
+  if(!Number.isInteger(y)||y<2020||y>2100) throw new Error('Valid year select karein.');
+  const from=Number(fromDay||t.fromDay||1), to=Number(toDay||t.toDay||from);
+  const daysInMonth=new Date(y,m,0).getDate();
+  if(from<1||to<1||from>to||from>daysInMonth) throw new Error(`Task period ${y}-${String(m).padStart(2,'0')} ke andar valid hona chahiye.`);
+  const safeTo=Math.min(to,daysInMonth);
+  const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
+  const key=[templateId,username,y,m,from,safeTo].join('|');
+  const existing=readRows_(sh).some(r=>String(r.assignmentKey||'')===key);
+  if(existing) throw new Error('Yeh template is employee ke liye isi month/year aur period mein pehle hi assign ho chuka hai.');
+  const tasks=[];
+  for(let day=from;day<=safeTo;day++){
+    const date=`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    tasks.push({id:Utilities.getUuid(),date:date,name:t.name,details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:date,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,expectedMinutes:'',progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date(),assignmentMonth:m,assignmentYear:y,assignmentFrom:from,assignmentTo:safeTo,assignmentKey:key});
+  }
+  if(tasks.length){
+    const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
+    const values=tasks.map(o=>headers.map(h=>o[h]!==undefined?o[h]:''));
+    sh.getRange(sh.getLastRow()+1,1,values.length,headers.length).setValues(values);
+  }
+  appendActivity_(file,user,'Task Assigned',`${t.name} · ${y}-${String(m).padStart(2,'0')} · ${from}-${safeTo}`);
+  notifyUsers_([user.username],'New Monthly Task Assigned',`${t.name} task ${String(from).padStart(2,'0')}-${String(safeTo).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y} ke liye assign ki gayi hai.`,'TASK');
+  audit_(s,'ASSIGN','TEMPLATE',`${t.name} → ${user.name} (${username}) · ${m}/${y} · ${from}-${safeTo}`);
+  return {count:tasks.length,username:user.username,name:user.name,fromDay:from,toDay:safeTo,month:m,year:y};
 }
 
 function employees_(s) {
@@ -1370,6 +1449,18 @@ function saveWeekoff_(s,day) {
   audit_(s,'UPDATE','SETTINGS','WEEKOFF_DAY='+n); return {weekoff:String(n)};
 }
 
+function setRamadanBreakFreeze_(s,frozen){
+  assertAdmin_(s);
+  const value=Boolean(frozen);
+  const sh=master_().getSheetByName('SystemSettings');
+  const rows=readRows_(sh);
+  const old=rows.find(function(r){return r.key==='RAMADAN_LUNCH_BREAK_FROZEN';});
+  if(old) updateByKey_(sh,'key','RAMADAN_LUNCH_BREAK_FROZEN',{value:value?'TRUE':'FALSE',updatedAt:new Date()});
+  else appendObject_(sh,{key:'RAMADAN_LUNCH_BREAK_FROZEN',value:value?'TRUE':'FALSE',updatedAt:new Date()});
+  audit_(s,'UPDATE','SETTINGS','RAMADAN_LUNCH_BREAK_FROZEN='+value);
+  return {frozen:value};
+}
+
 function createRequest_(s,r) {
   if(!r || !r.type || !r.date) throw new Error('Request type and date are required.');
   const user=findUser_(s.username); if(!user) throw new Error('User not found.');
@@ -1543,8 +1634,8 @@ function setupEmployeeSheets_(ss,u) {
   const first=ss.getSheets()[0]; first.setName('Profile');
   const map={
     Profile:['name','employeeId','username','role','department','designation','phone','whatsapp','office','address','country','region','state','division','district','year'],
-    Attendance:['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus'],
-    Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt'],
+    Attendance:['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt'],
+    Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey'],
     TaskTime:['taskId','date','start','end','minutes'],
     Leave:['id','from','to','type','reason','status','createdAt'],
     Requests:['id','type','date','details','startTime','endTime','meetingMode','adjustmentField','adjustmentTime','status','createdAt'],

@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.61
+// Office Task Report V.62
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -149,7 +149,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.57</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.62</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -221,6 +221,7 @@ function formatApprovalStatus(v){
   return ["APPROVE","APPROVED","APPROVAL","YES","Y","OK","TRUE","1"].includes(u)?"Approve":"Not Approve";
 }
 
+function formatTaskPeriod(r){ const from=r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${String(r.assignmentYear)}-${String(r.assignmentMonth).padStart(2,"0")}-${String(r.assignmentFrom).padStart(2,"0")}`:r.date; const to=r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${String(r.assignmentYear)}-${String(r.assignmentMonth).padStart(2,"0")}-${String(r.assignmentTo||r.assignmentFrom).padStart(2,"0")}`:r.due; return `${formatAttendanceDate(from)} To ${formatAttendanceDate(to)}`; }
 function formatAttendanceTime(v){
   if(v===null || v===undefined || v==="") return "-";
   const s=String(v).trim();
@@ -245,22 +246,38 @@ function Attendance({session,notify}) {
   const [attendanceDate,setAttendanceDate]=useState("");
   const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
   const emptyBreak=()=>({type:"",namazType:"",start:"",end:"",reason:""});
+  const normalizeBreaksForForm=(selected)=>[1,2,3].map(i=>({type:i===3?"Lunch":"Namaz",namazType:selected?.[`break${i}NamazType`]||"",start:(selected?.[`break${i}Start`]||"").slice(0,5),end:(selected?.[`break${i}End`]||"").slice(0,5),reason:""}));
   const [breaks,setBreaks]=useState([emptyBreak(),emptyBreak(),emptyBreak()]);
+  const [ramadanFreeze,setRamadanFreeze]=useState(false);
   const fileRef=React.useRef(null); const loadSeq=React.useRef(0);
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const load=async()=>{
     const seq=++loadSeq.current;
     setBusy(true);
     try{
-      const r=await api("attendance",{session,month:reportMonth,year:reportYear});
+      const syncKey=`otr_attendance_${session.username}_${reportYear}_${reportMonth}`; const previousSync=localStorage.getItem(syncKey)||"";
+      const r=await api("attendance",{session,month:reportMonth,year:reportYear,since:previousSync});
       if(seq!==loadSeq.current) return;
-      setData(r);
+      let mergedRows=r.rows||[];
+      if(r.incremental){
+        try{
+          const cached=JSON.parse(localStorage.getItem(`${syncKey}_rows`)||"[]");
+          const byDate=new Map(cached.map(x=>[String(x.date),x]));
+          (r.rows||[]).forEach(x=>byDate.set(String(x.date),x));
+          mergedRows=Array.from(byDate.values()).sort((a,b)=>String(a.date).localeCompare(String(b.date))).reverse();
+        }catch(_e){}
+      }
+      const viewData={...r,rows:mergedRows};
+      setData(viewData);
+      setRamadanFreeze(Boolean(r.break3Frozen));
+      try{localStorage.setItem(`${syncKey}_rows`,JSON.stringify(mergedRows));}catch(_e){}
+      if(r.syncAt) localStorage.setItem(syncKey,r.syncAt);
       const firstEditable=r.editableDates?.[0]?.date || "";
       setAttendanceDate(firstEditable);
       const selected=(r.rows||[]).find(x=>x.date===firstEditable);
       setInTime((selected?.in||"").slice(0,5));
       setOutTime((selected?.out||"").slice(0,5));
-      setBreaks([1,2,3].map(i=>({type:selected?.[`break${i}Type`]||"",namazType:selected?.[`break${i}NamazType`]||"",start:(selected?.[`break${i}Start`]||"").slice(0,5),end:(selected?.[`break${i}End`]||"").slice(0,5),reason:selected?.[`break${i}Reason`]||""})));
+      setBreaks(normalizeBreaksForForm(selected));
     }catch(e){if(seq===loadSeq.current) notify("error",e.message)}finally{if(seq===loadSeq.current)setBusy(false)}
   };
   useEffect(()=>{load()},[]);
@@ -270,7 +287,7 @@ function Attendance({session,notify}) {
     const row=(data?.rows||[]).find(x=>x.date===date);
     setInTime((row?.in||"").slice(0,5));
     setOutTime((row?.out||"").slice(0,5));
-    setBreaks([1,2,3].map(i=>({type:row?.[`break${i}Type`]||"",namazType:row?.[`break${i}NamazType`]||"",start:(row?.[`break${i}Start`]||"").slice(0,5),end:(row?.[`break${i}End`]||"").slice(0,5),reason:row?.[`break${i}Reason`]||""})));
+    setBreaks(normalizeBreaksForForm(row));
   };
 
   useEffect(()=>{load()},[reportMonth,reportYear]);
@@ -280,7 +297,8 @@ function Attendance({session,notify}) {
     if(!inTime && !outTime){notify("error","IN Time ya OUT Time enter karein.");return;}
     try{
       setBusy(true);
-      await api("saveAttendance",{session,date:attendanceDate,inTime,outTime,breaks});
+      const saveBreaks=breaks.map((b,i)=>({...b,type:i===2?"Lunch":"Namaz",namazType:i===0||i===1?b.namazType:""}));
+      await api("saveAttendance",{session,date:attendanceDate,inTime,outTime,breaks:saveBreaks});
       notify("success","Attendance aur break details save ho gayi.");
       await load();
     }catch(e){
@@ -348,23 +366,18 @@ function Attendance({session,notify}) {
           </label>
           <div className="assign-note full-span"><Clock3 size={15}/> Office Time: <b>{data?.settings?.officeInTime||"--:--"}</b> to <b>{data?.settings?.officeOutTime||"--:--"}</b> · Weekoff: <b>{data?.settings?.weekoffLabel||"Default"}</b></div>
           <div className="break-section full-span">
-            <div className="break-section-head"><div><b>Break Time</b><small>Maximum 3 breaks per working day.</small></div><span className="muted">Namaz · Lunch · Gharelu Emergency · Other</span></div>
-            {breaks.map((b,i)=><div className="break-card" key={i}>
-              <div className="break-title">Break {i+1}</div>
-              <label>Break Type<select value={b.type} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,type:e.target.value,namazType:e.target.value==='Namaz'?x.namazType:'',reason:e.target.value==='Other'?x.reason:''}:x))}>
-                <option value="">Select Break</option><option value="Namaz">Namaz</option><option value="Lunch">Lunch</option><option value="Gharelu Emergency">Gharelu Emergency</option><option value="Other">Other</option>
-              </select></label>
-              {b.type==='Namaz' && <label>Namaz Type<select value={b.namazType} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,namazType:e.target.value}:x))}><option value="">Select</option><option value="Zohar / Juma">Zohar / Juma</option><option value="Asr">Asr</option><option value="Magrib">Magrib</option></select></label>}
-              <label>Start Time<input type="time" value={b.start} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,start:e.target.value}:x))}/></label>
-              <label>End Time<input type="time" value={b.end} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,end:e.target.value}:x))}/></label>
-              {b.type==='Other' && <label>Reason<input value={b.reason} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===i?{...x,reason:e.target.value}:x))} placeholder="Break reason"/></label>}
-            </div>)}
+            <div className="break-section-head"><div><b>Break Time</b><small>Maximum 3 breaks per working day.</small></div><span className="muted">Namaz · Lunch Time</span></div>
+            <div className="break-card"><div className="break-title">Break 1: For Namaz</div><label>Namaz Name<select value={breaks[0]?.namazType||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===0?{...x,namazType:e.target.value,type:"Namaz"}:x))}><option value="">Select</option><option value="Zohar">Zohar</option><option value="Juma">Juma</option></select></label><label>Start Time<input type="time" value={breaks[0]?.start||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===0?{...x,start:e.target.value,type:"Namaz"}:x))}/></label><label>End Time<input type="time" value={breaks[0]?.end||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===0?{...x,end:e.target.value,type:"Namaz"}:x))}/></label></div>
+            <div className="break-card"><div className="break-title">Break 2: For Namaz</div><label>Namaz Name<select value={breaks[1]?.namazType||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===1?{...x,namazType:e.target.value,type:"Namaz"}:x))}><option value="">Select</option><option value="Asr">Asr</option><option value="Magrib">Magrib</option></select></label><label>Start Time<input type="time" value={breaks[1]?.start||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===1?{...x,start:e.target.value,type:"Namaz"}:x))}/></label><label>End Time<input type="time" value={breaks[1]?.end||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===1?{...x,end:e.target.value,type:"Namaz"}:x))}/></label></div>
+            <div className={`break-card ${ramadanFreeze?"break-frozen":""}`}><div className="break-title">Break 3: For Lunch Time</div><label>Start Time<input type="time" value={breaks[2]?.start||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===2?{...x,start:e.target.value,type:"Lunch"}:x))} disabled={ramadanFreeze}/></label><label>End Time<input type="time" value={breaks[2]?.end||""} onChange={e=>setBreaks(bs=>bs.map((x,j)=>j===2?{...x,end:e.target.value,type:"Lunch"}:x))} disabled={ramadanFreeze}/></label>{ramadanFreeze&&<small className="muted">Ramadan mein Lunch Break Admin ne freeze kiya hai.</small>}</div>
           </div>
+          {['MASTER_ADMIN','ADMIN'].includes(session.role) && <div className="assign-note full-span ramadan-freeze-control"><label className="inline-check"><input type="checkbox" checked={ramadanFreeze} onChange={async e=>{const next=e.target.checked; try{await api("setRamadanBreakFreeze",{session,frozen:next});setRamadanFreeze(next);notify("success",next?"Ramadan Lunch Break freeze kar diya gaya.":"Ramadan Lunch Break unfreeze kar diya gaya.")}catch(err){notify("error",err.message)}}}/> Ramadan Roza: Freeze Lunch Break</label></div>}
           {selectedRule?.nonWorking && <div className="assign-note full-span">{selectedRule.reason || "Leave / Weekoff / Weekoff Adjustment"}. Attendance select karne ki zarurat nahi hai.</div>}
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
       </section>
       <section className="panel recent-attendance-panel"><PanelTitle title="Attendance Record" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Total Break Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes||0,r.breakMinutes||0,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
+      <section className="panel"><PanelTitle title="Break Time Report" action={<span className="muted">Only over maximum time</span>}/>{(data?.breakAlerts||[]).length?<SimpleTable columns={["Date","Break","Allowed Max","Actual","Extra Time"]} rows={(data.breakAlerts||[]).map(r=>[formatAttendanceDate(r.date),r.type,`${r.allowedMinutes} min`,`${r.actualMinutes} min`,`${r.excessMinutes} min`])}/>:<div className="empty">No break over-time records for selected month.</div>}</section>
     </div>
   </div>
 }
@@ -399,14 +412,15 @@ function formatTime(v){const s=String(v||"").slice(0,5);if(!/^\d{2}:\d{2}$/.test
 function Tasks({session,notify}) {
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const [rows,setRows]=useState([]), [busy,setBusy]=useState(true), [search,setSearch]=useState("");
-  const load=async()=>{setBusy(true);try{const r=await api("tasks",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}finally{setBusy(false)}};
-  useEffect(()=>{load()},[]);
+  const nowTask=new Date(); const [taskMonth,setTaskMonth]=useState(String(nowTask.getMonth()+1).padStart(2,"0")); const [taskYear,setTaskYear]=useState(String(nowTask.getFullYear()));
+  const load=async()=>{setBusy(true);try{const syncKey=`otr_tasks_${session.username}_${taskYear}_${taskMonth}`;const since=localStorage.getItem(syncKey)||"";const r=await api("tasks",{session,month:taskMonth,year:taskYear,since});let merged=r.rows||[];if(r.incremental){try{const cached=JSON.parse(localStorage.getItem(`${syncKey}_rows`)||"[]");const byId=new Map(cached.map(x=>[String(x.id),x]));(r.rows||[]).forEach(x=>byId.set(String(x.id),x));merged=Array.from(byId.values()).sort((a,b)=>String(b.date).localeCompare(String(a.date)));}catch(_e){}}setRows(merged);try{localStorage.setItem(`${syncKey}_rows`,JSON.stringify(merged));}catch(_e){}if(r.syncAt)localStorage.setItem(syncKey,r.syncAt)}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  useEffect(()=>{load()},[taskMonth,taskYear]);
   const action=async(id,type)=>{try{await api("taskAction",{session,taskId:id,type});notify("success",type==="START"?"Task started.":type==="COMPLETE"?"Task completed.":"Task updated.");load()}catch(e){notify("error",e.message)}};
   const progress=async(r)=>{const value=window.prompt(`Progress % for ${r.name}`,String(r.progress||0));if(value===null)return;const note=window.prompt("Progress note (optional)",String(r.progressNote||""));try{await api("taskProgress",{session,taskId:r.id,progress:Number(value),note:note||""});notify("success","Task progress updated.");load()}catch(e){notify("error",e.message)}};
   const filtered=rows.filter(r=>Object.values(r).join(" ").toLowerCase().includes(search.toLowerCase()));
   return <div>
-    <PageHead title={isAdmin?"Task Management":"Check Task"} subtitle={isAdmin?"Check assigned tasks, status, timing and progress.":"Check your assigned tasks, progress, timing and completion."} action={<div className="search"><Search size={16}/><input placeholder="Search tasks…" value={search} onChange={e=>setSearch(e.target.value)}/></div>}/>
-    <section className="panel">{busy?<Loader/>:<div className="table-wrap"><table><thead><tr><th>Task</th><th>Priority</th><th>Due</th><th>Status</th><th>Progress</th><th>Actual</th><th>Action</th></tr></thead><tbody>{filtered.length?filtered.map(r=><tr key={r.id}><td><b>{r.name}</b><small>{r.category}</small></td><td><span className={`priority ${String(r.priority).toLowerCase()}`}>{r.priority}</span></td><td>{r.due}</td><td><span className="status">{r.status}</span></td><td><div className="progress-cell"><b>{Number(r.progress||0)}%</b><div className="progress-track"><span style={{width:`${Math.min(100,Math.max(0,Number(r.progress||0)))}%`}}/></div></div></td><td>{r.actualMinutes||0} min</td><td><div className="table-actions">{r.status==="ASSIGNED"&&<button className="mini primary" onClick={()=>action(r.id,"START")}>Start</button>}{r.status==="IN_PROGRESS"&&<button className="mini primary" onClick={()=>action(r.id,"COMPLETE")}>Complete</button>}{!['COMPLETED','CANCELLED'].includes(r.status)&&<button className="mini secondary" onClick={()=>progress(r)}>Progress</button>}</div></td></tr>):<tr><td colSpan="7" className="empty">No tasks found.</td></tr>}</tbody></table></div>}</section>
+    <PageHead title={isAdmin?"Task Management":"Check Task"} subtitle={isAdmin?"Check assigned tasks, status, timing and progress.":"Check your assigned tasks, progress, timing and completion."} action={<div className="task-filter-bar"><select value={taskMonth} onChange={e=>setTaskMonth(e.target.value)}>{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,"0");return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString("en-IN",{month:"long"})}</option>})}</select><select value={taskYear} onChange={e=>setTaskYear(e.target.value)}>{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><div className="search"><Search size={16}/><input placeholder="Search tasks…" value={search} onChange={e=>setSearch(e.target.value)}/></div></div>}/>
+    <section className="panel">{busy?<Loader/>:<div className="table-wrap"><table><thead><tr><th>Task</th><th>Priority</th><th>Date To Date</th><th>Status</th><th>Progress</th><th>Actual</th><th>Action</th></tr></thead><tbody>{filtered.length?filtered.map(r=><tr key={r.id}><td><b>{r.name}</b><small>{r.category}</small></td><td><span className={`priority ${String(r.priority).toLowerCase()}`}>{r.priority}</span></td><td>{formatTaskPeriod(r)}</td><td><span className="status">{r.status}</span></td><td><div className="progress-cell"><b>{Number(r.progress||0)}%</b><div className="progress-track"><span style={{width:`${Math.min(100,Math.max(0,Number(r.progress||0)))}%`}}/></div></div></td><td>{r.actualMinutes||0} min</td><td><div className="table-actions">{r.status==="ASSIGNED"&&<button className="mini primary" onClick={()=>action(r.id,"START")}>Start</button>}{r.status==="IN_PROGRESS"&&<button className="mini primary" onClick={()=>action(r.id,"COMPLETE")}>Complete</button>}{!['COMPLETED','CANCELLED'].includes(r.status)&&<button className="mini secondary" onClick={()=>progress(r)}>Progress</button>}</div></td></tr>):<tr><td colSpan="7" className="empty">No tasks found.</td></tr>}</tbody></table></div>}</section>
   </div>
 }
 
@@ -416,7 +430,7 @@ function Templates({session,notify}) {
   const [form,setForm]=useState(empty);
   const [editing,setEditing]=useState(false);
   const [users,setUsers]=useState([]);
-  const [assign,setAssign]=useState({templateId:"",username:""});
+  const [assign,setAssign]=useState({templateId:"",username:"",month:String(new Date().getMonth()+1).padStart(2,"0"),year:String(new Date().getFullYear()),fromDay:"1",toDay:"1"});
   const [busy,setBusy]=useState(false);
 
   const taskCategories = {
@@ -473,9 +487,9 @@ function Templates({session,notify}) {
     e.preventDefault();
     if(!assign.templateId || !assign.username){notify("error","Template aur Employee/HOD select karein.");return;}
     try{
-      const r=await api("assignTemplate",{session,templateId:assign.templateId,username:assign.username});
-      notify("success",`Template ${r.name} ko one-time assign ho gaya.`);
-      setAssign({templateId:"",username:""});
+      const r=await api("assignTemplate",{session,templateId:assign.templateId,username:assign.username,month:Number(assign.month),year:Number(assign.year),fromDay:Number(assign.fromDay),toDay:Number(assign.toDay)});
+      notify("success",`Template ${r.name} ko ${r.fromDay}-${r.toDay}/${r.month}/${r.year} ke liye ${r.count} daily task(s) assign ho gaye.`);
+      setAssign({...assign,templateId:"",username:""});
     }catch(e){notify("error",e.message)}
   };
 
@@ -513,22 +527,26 @@ function Templates({session,notify}) {
         <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update Template</> : <><Plus size={16}/> Create Template</>}</button>
       </form>
       <section className="panel">
-        <PanelTitle title="Assign Template One Time"/>
+        <PanelTitle title="Assign Task for Month / Date Range"/>
         <form className="form-grid compact-form" onSubmit={assignTemplate}>
           <label>Template
-            <select value={assign.templateId} onChange={e=>setAssign({...assign,templateId:e.target.value})} required>
+            <select value={assign.templateId} onChange={e=>{const id=e.target.value;const t=rows.find(x=>String(x.id)===String(id));setAssign({...assign,templateId:id,fromDay:String(t?.fromDay||1),toDay:String(t?.toDay||t?.fromDay||1)})}} required>
               <option value="">Select Template</option>
               {rows.map(r=><option key={r.id} value={r.id}>{r.name} · {r.category}</option>)}
             </select>
           </label>
+          <label>Month<select value={assign.month} onChange={e=>setAssign({...assign,month:e.target.value})}>{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,"0");return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString("en-IN",{month:"long"})}</option>})}</select></label>
+          <label>Year<select value={assign.year} onChange={e=>setAssign({...assign,year:e.target.value})}>{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-2+i);return <option key={y} value={y}>{y}</option>})}</select></label>
+          <label>From Day<select value={assign.fromDay} onChange={e=>setAssign({...assign,fromDay:e.target.value})}>{Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}</select></label>
+          <label>To Day<select value={assign.toDay} onChange={e=>setAssign({...assign,toDay:e.target.value})}>{Array.from({length:31},(_,i)=><option key={i+1} value={i+1}>{i+1}</option>)}</select></label>
           <label>Employee / HOD
             <select value={assign.username} onChange={e=>setAssign({...assign,username:e.target.value})} required>
               <option value="">Select Employee / HOD</option>
               {users.map(u=><option key={u.username} value={u.username}>{u.name} · {u.role} · {u.employeeCode}</option>)}
             </select>
           </label>
-          <div className="assign-note full-span">Select karke <b>Assign One Time</b> karein. Task selected user ke current-year Tasks sheet mein immediately add hoga.</div>
-          <button className="primary full-span"><CheckCircle2 size={16}/> Assign One Time</button>
+          <div className="assign-note full-span">Month/Year aur Date To Date select karke task assign karein. Har selected date ke liye task create hoga; poore saal automatically repeat nahi hoga.</div>
+          <button className="primary full-span"><CheckCircle2 size={16}/> Assign for Selected Period</button>
         </form>
         <div className="section-divider"/>
         <PanelTitle title="Template Library"/>
@@ -706,7 +724,7 @@ function PanelTitle({title,action}){return <div className="panel-title"><h3>{tit
 function Kpi({icon,label,value}){return <div className="kpi"><div className="kpi-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong></div></div>}
 function ActivityList({items=[]}){return <div className="activity-list">{items.length?items.map((x,i)=><div className="activity" key={i}><span className="activity-dot"/><div><b>{x.title}</b><small>{x.time}</small></div></div>):<Empty text="No activity yet."/>}</div>}
 function ReminderList({items=[]}){return <div className="reminders">{items.length?items.map((x,i)=><div className="reminder" key={i}><CalendarDays size={17}/><div><b>{x.title}</b><span>{x.when}</span></div></div>):<Empty text="No upcoming reminders."/>}</div>}
-function TaskTable({rows,onAction}){return <div className="table-wrap"><table><thead><tr><th>Task</th><th>Priority</th><th>Due</th><th>Status</th><th>Actual</th><th></th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b><small>{r.category}</small></td><td><span className={`priority ${String(r.priority).toLowerCase()}`}>{r.priority}</span></td><td>{r.due}</td><td><span className="status">{r.status}</span></td><td>{r.actualMinutes||0} min</td><td>{r.status==="ASSIGNED"?<button className="mini primary" onClick={()=>onAction(r.id,"START")}>Start</button>:r.status==="IN_PROGRESS"?<button className="mini primary" onClick={()=>onAction(r.id,"COMPLETE")}>Complete</button>:null}</td></tr>)}</tbody></table></div>}
+function TaskTable({rows,onAction}){return <div className="table-wrap"><table><thead><tr><th>Task</th><th>Priority</th><th>Date To Date</th><th>Status</th><th>Actual</th><th></th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b><small>{r.category}</small></td><td><span className={`priority ${String(r.priority).toLowerCase()}`}>{r.priority}</span></td><td>{formatTaskPeriod(r)}</td><td><span className="status">{r.status}</span></td><td>{r.actualMinutes||0} min</td><td>{r.status==="ASSIGNED"?<button className="mini primary" onClick={()=>onAction(r.id,"START")}>Start</button>:r.status==="IN_PROGRESS"?<button className="mini primary" onClick={()=>onAction(r.id,"COMPLETE")}>Complete</button>:null}</td></tr>)}</tbody></table></div>}
 function SimpleTable({columns,rows}){if(!rows.length)return <Empty text="No records found."/>;return <div className="table-wrap"><table><thead><tr>{columns.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j}>{c}</td>)}</tr>)}</tbody></table></div>}
 function Empty({text}){return <div className="empty">{text}</div>}
 function Loader({text="Loading…"}){return <div className="loader"><RefreshCw size={17} className="spin"/> {text}</div>}

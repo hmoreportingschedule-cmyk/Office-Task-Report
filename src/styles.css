@@ -76,3 +76,9 @@
 
 .break-section{border:1px solid #dbe7e5;border-radius:14px;padding:14px;background:#f8fbfb}.break-section-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.break-section-head small{display:block;color:#6b7b86;margin-top:3px}.break-card{display:grid;grid-template-columns:110px 1.2fr 1fr 1fr 1fr;gap:10px;align-items:end;padding:10px 0;border-top:1px solid #e7eeee}.break-title{font-weight:700;color:#123}.break-card label{margin:0}.notes-list{display:flex;flex-direction:column;gap:10px}.note-item{border:1px solid #dfe9e7;border-radius:12px;padding:12px;background:#fbfdfd}.note-meta{display:flex;gap:16px;font-size:12px;color:#6b7b86;margin-bottom:6px}.note-text{white-space:pre-wrap;line-height:1.5;color:#17252d}.notes-layout{align-items:start}
 @media(max-width:900px){.break-card{grid-template-columns:1fr 1fr}.break-title{grid-column:1/-1}.break-section-head{flex-direction:column;align-items:flex-start}}
+
+/* V.62 task filters and break report */
+.task-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.task-filter-bar select{min-width:105px}.break-alert{font-weight:700}
+@media(max-width:620px){.task-filter-bar{width:100%}.task-filter-bar select{flex:1;min-width:0}.task-filter-bar .search{width:100%}}
+
+.break-card{display:grid;grid-template-columns:minmax(180px,1.1fr) minmax(150px,1fr) minmax(150px,1fr);gap:14px;align-items:end;padding:14px 0;border-top:1px solid #e5e7eb}.break-card:first-of-type{border-top:0}.break-card .break-title{font-weight:700;align-self:center}.break-frozen{opacity:.65}.ramadan-freeze-control{margin-top:10px}.inline-check{display:flex;align-items:center;gap:8px;font-weight:600}.inline-check input{width:18px;height:18px}@media(max-width:760px){.break-card{grid-template-columns:1fr 1fr}.break-card .break-title{grid-column:1/-1}}
