@@ -1,118 +1,23 @@
 {
-  "name": "office-task-report",
+  "name": "office-task-report-v1",
   "private": true,
-  "version": "3.3.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.1.6"
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.5"
   }
 }
-```[cite: 2]
-
----
-
-### 2. `index.html`
-```html
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Office Task Report</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-```[cite: 2]
-
----
-
-### 3. `src/styles.css`
-```css
-:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-```[cite: 2]
-
----
-
-### 4. `src/main.jsx`
-```jsx
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import './styles.css'
-
-function App() {
-  return (
-    <div className="card">
-      <h1>Office Task Report Dashboard</h1>
-      <p>Frontend successfully connected with Cloudflare Pages / Vercel.</p>
-    </div>
-  )
-}
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-```[cite: 2]
-
----
-
-### 5. `api/office-task.js`
-(Yeh wohi Google Apps Script backend code hai jo aapne upar share kiya tha, isko aap Google Apps Script editor mein paste karke deploy karenge[cite: 2]).
-
----
-
-### 📁 Is Zip Code ko Kaise Use Karein?
-1. Apne computer par ek naya folder banayein aur upar diye gaye structure ke mutabiq files (`package.json`, `index.html`, `src/styles.css`, `src/main.jsx`) save karein.
-2. Is folder ko **GitHub repository** par push kar dein.
-3. **Cloudflare Pages** ya **Vercel** par is GitHub repo ko select karke deploy kar dein (`npm run build` command ke sath).
