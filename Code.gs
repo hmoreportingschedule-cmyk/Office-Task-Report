@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.68
+ * OFFICE TASK REPORT V.74
  * Google Apps Script backend
  *
  * Architecture:
@@ -8,14 +8,16 @@
  * Example: Asif_12345_2026
  */
 
-const USERS_SCHEMA_VERSION = 'V68_CUMULATIVE';
+const USERS_SCHEMA_VERSION = 'V72_FAST_MINIMAL';
+const EMPLOYEE_SHEETS_SCHEMA_VERSION = 'V74_MINIMAL';
+const MASTER_SHEETS_SCHEMA_VERSION = 'V74_MASTER_MINIMAL';
 
 const CONFIG = {
   MASTER_NAME: 'office-task-report',
   MASTER_FOLDER_PATH: ['Dashboard Working','office-task-report'],
   EMPLOYEE_FOLDER: 'Office Task Report - Employee Files',
   PHOTO_FOLDER: 'Office Task Report - Photos',
-  YEARLY_SHEETS: ['Profile','Attendance','Tasks','TaskTime','Leave','Requests','Activities','Notifications'],
+  YEARLY_SHEETS: ['Profile','Attendance','Tasks','Requests','Activities'],
   DEFAULT_ADMIN: {username:'admin', password:'Admin@123', name:'Master Admin', role:'MASTER_ADMIN'}
 };
 
@@ -24,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.68',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.74',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.68',
+      version:'V.74',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.68',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.74',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -177,11 +179,11 @@ function ensureBackend_() {
     Templates:['id','name','details','category','priority','fromDay','toDay','createdBy','createdAt'],
     Notifications:['id','username','title','message','type','time','read'],
     Notes:['id','username','role','text','date','time','createdAt'],
-    Approvals:['id','requestId','type','employeeId','employeeName','username','date','details','status','createdBy','createdAt','updatedAt'],
+    Approvals:['id','requestId','type','employeeId','employeeName','username','date','details','startTime','endTime','meetingMode','adjustmentField','adjustmentTime','status','createdBy','createdAt','updatedAt'],
     AuditLog:['time','username','action','module','details'],
     Holidays:['id','date','name','type','createdBy','createdAt'],
     SystemSettings:['key','value','updatedAt'],
-    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt'],
+    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt'],
     AttendanceRoster:['employeeId','username','date','officeInTime','officeOutTime','weekoffDay','updatedAt']
   };
 
@@ -200,6 +202,14 @@ function ensureBackend_() {
   // 6) Automatically create/repair the Users schema WITHOUT losing existing data.
   const users = ss.getSheetByName('Users');
   ensureUsersSchemaAuto_(users, sheetDefs.Users);
+
+  // 6b) Keep all non-Users master tabs limited to the current V72 columns.
+  // This runs once per schema version and preserves data by matching column names.
+  const masterSchemaProps=PropertiesService.getScriptProperties();
+  if(masterSchemaProps.getProperty('MASTER_SHEETS_SCHEMA_VERSION')!==MASTER_SHEETS_SCHEMA_VERSION){
+    normalizeMasterSheets_(ss,sheetDefs);
+    masterSchemaProps.setProperty('MASTER_SHEETS_SCHEMA_VERSION',MASTER_SHEETS_SCHEMA_VERSION);
+  }
 
   // 7) Ensure Master Admin exists. Never overwrite a manually entered password.
   const rows = readRows_(users);
@@ -258,6 +268,26 @@ function ensureBackend_() {
  * preserving existing rows by matching common header names. This replaces the
  * previous manual Users-sheet preparation step.
  */
+function normalizeMasterSheets_(ss,defs){
+  Object.keys(defs).forEach(function(name){
+    if(name==='Users') return;
+    const expected=defs[name];
+    let sh=ss.getSheetByName(name);
+    if(!sh) sh=ss.insertSheet(name);
+    const lastRow=sh.getLastRow(), lastCol=sh.getLastColumn();
+    const oldHeaders=lastRow>0&&lastCol>0?sh.getRange(1,1,1,lastCol).getValues()[0].map(function(h){return String(h||'').trim();}):[];
+    const data=lastRow>1&&lastCol>0?sh.getRange(2,1,lastRow-1,lastCol).getValues():[];
+    const index={}; oldHeaders.forEach(function(h,i){if(h && index[h]===undefined) index[h]=i;});
+    const out=data.map(function(row){return expected.map(function(h){const i=index[h];return i===undefined?'':row[i];});});
+    if(sh.getMaxColumns()<expected.length) sh.insertColumnsAfter(sh.getMaxColumns(),expected.length-sh.getMaxColumns());
+    if(sh.getMaxColumns()>expected.length) sh.deleteColumns(expected.length+1,sh.getMaxColumns()-expected.length);
+    sh.clearContents();
+    sh.getRange(1,1,1,expected.length).setValues([expected]);
+    if(out.length) sh.getRange(2,1,out.length,expected.length).setValues(out);
+    sh.setFrozenRows(1);
+  });
+}
+
 function ensureUsersSchemaAuto_(sh, expected) {
   if (!sh) throw new Error('Unable to create Users sheet.');
 
@@ -357,6 +387,9 @@ function route_(action,b) {
     case 'saveNote': return saveNote_(b.session,b.note);
     case 'createNote': return saveNote_(b.session,b.note);
     case 'addNote': return saveNote_(b.session,b.note);
+    case 'saveNotes': return saveNote_(b.session,b.note);
+    case 'noteSave': return saveNote_(b.session,b.note);
+    case 'save_note': return saveNote_(b.session,b.note);
     case 'tasks': return tasks_(b.session,b.month,b.year,b.since);
     case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes);
     case 'assignTask': return assignTask_(b.session,b.task);
@@ -373,6 +406,9 @@ function route_(action,b) {
     case 'deleteEmployee': return deleteEmployee_(b.session,b.username);
     case 'approvals': return approvals_(b.session);
     case 'approvalAction': return approvalAction_(b.session,b.id,b.status);
+    case 'approvalCenter': return approvalCenter_(b.session);
+    case 'approvalItem': return approvalItem_(b.session,b.kind,b.username,b.id,b.status);
+    case 'bulkApproval': return bulkApproval_(b.session,b.kind,b.items,b.status,b.all);
     case 'reports': return reports_(b.session,b.range);
     case 'advancedReports': return advancedReports_(b.session,b.range);
     case 'previewAttendanceImport': return previewAttendanceImport_(b.session,b.rows);
@@ -566,6 +602,8 @@ function findUser_(username) {
 }
 
 function dashboard_(s) {
+  const cache=CacheService.getScriptCache(), key='OTR_DASH_'+String(s.username||'');
+  try{const hit=cache.get(key); if(hit) return JSON.parse(hit);}catch(e){}
   const user=findUser_(s.username), empFile=getEmployeeFile_(user);
   const taskData=readRows_(empFile.getSheetByName('Tasks'));
   const att=readRows_(empFile.getSheetByName('Attendance'));
@@ -576,13 +614,27 @@ function dashboard_(s) {
   const trend=last7_(taskData);
   const activities=readRows_(empFile.getSheetByName('Activities')).slice(-5).reverse().map(r=>({title:r.title,time:r.time}));
   const reminders=taskData.filter(r=>r.due>=today && r.status!=='COMPLETED').slice(0,5).map(r=>({title:r.name,when:'Due '+r.due}));
-  return {kpis:{present:att.filter(r=>r.date===today && r.status==='PRESENT').length,myTasks:myToday.length,completed,pending},trend,activities,reminders};
+  const result={kpis:{present:att.filter(r=>r.date===today && r.status==='PRESENT').length,myTasks:myToday.length,completed,pending},trend,activities,reminders};
+  try{cache.put(key,JSON.stringify(result),20);}catch(e){}
+  return result;
 }
+
+function invalidateDashboardCache_(username){try{CacheService.getScriptCache().remove('OTR_DASH_'+String(username||''));}catch(e){}}
 
 function attendance_(s,month,year,since) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), attSh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
-  const rows=readRows_(attSh);
+  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
+  const version=PropertiesService.getScriptProperties().getProperty('OTR_SYNCVER_ATTENDANCE_'+String(user.username))||'';
+  const selectedMonthCache=month?Number(month):Number(Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'MM'));
+  const selectedYearCache=year?Number(year):Number(Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy'));
+  const cacheKey='OTR_ATT_ROWS_'+String(user.username)+'_'+String(selectedYearCache)+'_'+String(selectedMonthCache)+'_'+version.replace(/[^A-Za-z0-9]/g,'').slice(-20);
+  let rows=null;
+  try{const hit=CacheService.getScriptCache().get(cacheKey);if(hit) rows=JSON.parse(hit);}catch(e){}
+  if(!Array.isArray(rows)){
+    const rawRows=readRows_(attSh);
+    rows=rawRows;
+    try{CacheService.getScriptCache().put(cacheKey,JSON.stringify(rows),20);}catch(e){}
+  }
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
   const yesterdayStr=Utilities.formatDate(yesterday,Session.getScriptTimeZone(),'yyyy-MM-dd');
@@ -610,7 +662,7 @@ function attendance_(s,month,year,since) {
   const breakAlerts=[];
   filteredRows.forEach(function(r){
     for(let i=1;i<=3;i++){
-      const type=String(r[`break${i}Type`]||'').trim();
+      const type=i===3?'Lunch':'Namaz';
       const namaz=String(r[`break${i}NamazType`]||'').trim();
       const startT=normalizeTime_(r[`break${i}Start`]), endT=normalizeTime_(r[`break${i}End`]);
       if(!startT||!endT) continue;
@@ -689,7 +741,7 @@ function importAttendance_(s, inputRows) {
       const group = groups[code], user = group.user;
       const file = getEmployeeFile_(user);
       const sh = file.getSheetByName('Attendance');
-      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
       const range = sh.getDataRange();
       const values = range.getValues();
       const headers = values.shift().map(String);
@@ -797,7 +849,7 @@ function getBreakEntries_(r){
   for(let i=1;i<=3;i++){
     const start=normalizeTime_(r[`break${i}Start`]), end=normalizeTime_(r[`break${i}End`]);
     if(!start||!end) continue;
-    const type=String(r[`break${i}Type`]||'').trim(), namaz=String(r[`break${i}NamazType`]||'').trim();
+    const type=i===3?'Lunch':'Namaz', namaz=String(r[`break${i}NamazType`]||'').trim();
     const actual=minutesBetween_(start,end), rule=breakRule_(type,namaz), extra=rule.max>0?Math.max(0,actual-rule.max):0;
     out.push({breakNo:i,type:type,namazType:namaz,start:start,end:end,actualMinutes:actual,allowedMinutes:rule.max,extraMinutes:extra,label:rule.label,range:rule.range});
   }
@@ -891,7 +943,7 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
   if(!tmIn && !tmOut) throw new Error('IN Time ya OUT Time enter karein.');
   if(tmOut && !tmIn) throw new Error('Pehle IN Time enter karein.');
   if(tmIn && tmOut && minutesBetween_(tmIn,tmOut)<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
   let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
   if(!existing){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}); existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}; }
   const patch={}; if(tmIn) patch.in=tmIn; if(tmOut) patch.out=tmOut;
@@ -906,11 +958,11 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
     const has=!!(start||end||b.namazType);
     if(i===3 && frozenLunch){
       if(has) throw new Error('Ramadan Lunch Break abhi Admin ne freeze kiya hua hai.');
-      patch.break3Type=''; patch.break3NamazType=''; patch.break3Start=''; patch.break3End=''; patch.break3Reason='';
+      patch.break3NamazType=''; patch.break3Start=''; patch.break3End='';
       continue;
     }
     if(!has){
-      patch[`break${i}Type`]=''; patch[`break${i}NamazType`]=''; patch[`break${i}Start`]=''; patch[`break${i}End`]=''; patch[`break${i}Reason`]='';
+      patch[`break${i}NamazType`]=''; patch[`break${i}Start`]=''; patch[`break${i}End`]='';
       continue;
     }
     if(!start||!end) throw new Error(`Break ${i}: Start aur End Time dono select karein.`);
@@ -921,7 +973,7 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
     if(i===2 && !['Asr','Magrib'].includes(namaz)) throw new Error('Break 2 mein Asr ya Magrib select karein.');
     if(i===3) namaz='';
     const prefix=`break${i}`;
-    patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=namaz; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]='';
+    patch[`${prefix}NamazType`]=namaz; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end;
     breakTotal+=minutesBetween_(start,end);
   }
   patch.breakMinutes=Math.round(breakTotal);
@@ -947,15 +999,15 @@ function punch_(s,type,dateStr,timeStr) {
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
   let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
   // Robustly handle a newly created attendance row. Do not assume that a
   // second read will immediately return the row; this was causing
   // "Cannot read properties of undefined (reading 'in')" during Save.
   if(!existing){
-    appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,break1Type:'',break1NamazType:'',break1Start:'',break1End:'',break1Reason:'',break2Type:'',break2NamazType:'',break2Start:'',break2End:'',break2Reason:'',break3Type:'',break3NamazType:'',break3Start:'',break3End:'',break3Reason:'',status:'PRESENT',approveStatus:'Not Approve'});
-    existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,break1Type:'',break1NamazType:'',break1Start:'',break1End:'',break1Reason:'',break2Type:'',break2NamazType:'',break2Start:'',break2End:'',break2Reason:'',break3Type:'',break3NamazType:'',break3Start:'',break3End:'',break3Reason:'',status:'PRESENT',approveStatus:'Not Approve'};
+    appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,extraBreakMinutes:0,break1NamazType:'',break1Start:'',break1End:'',break2NamazType:'',break2Start:'',break2End:'',break3Start:'',break3End:'',status:'PRESENT',approveStatus:'Not Approve',approvedBy:'',approvedAt:'',updatedAt:new Date()});
+    existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,extraBreakMinutes:0,break1NamazType:'',break1Start:'',break1End:'',break2NamazType:'',break2Start:'',break2End:'',break3Start:'',break3End:'',status:'PRESENT',approveStatus:'Not Approve',approvedBy:'',approvedAt:'',updatedAt:new Date()};
   }
 
   if(type==='IN'){
@@ -977,27 +1029,30 @@ function punch_(s,type,dateStr,timeStr) {
 
 function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reason){
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const date=normalizeAttendanceDate_(dateStr); if(!date) throw new Error('Valid attendance date select karein.');
   const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'); if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const n=Number(breakNo); if(![1,2,3].includes(n)) throw new Error('Maximum 3 breaks allowed hain.');
-  const type=String(breakType||'').trim(); if(!type) throw new Error('Break type select karein.');
+  const type=n===3?'Lunch':'Namaz';
+  const namaz=String(namazType||'').trim();
+  if(n===1 && !['Zohar','Juma'].includes(namaz)) throw new Error('Break 1 mein Zohar ya Juma select karein.');
+  if(n===2 && !['Asr','Magrib'].includes(namaz)) throw new Error('Break 2 mein Asr ya Magrib select karein.');
+  if(n===3 && String(namazType||'').trim()) throw new Error('Lunch Break mein Namaz select nahi hoti.');
   const start=normalizeTime_(startTime), end=normalizeTime_(endTime); if(!start||!end) throw new Error('Break Start aur End Time dono select karein.');
   const mins=minutesBetween_(start,end); if(mins<=0) throw new Error('Break End Time, Start Time ke baad hona chahiye.');
-  if(type==='Namaz' && !String(namazType||'').trim()) throw new Error('Namaz ka type select karein.');
-  if(type==='Other' && !String(reason||'').trim()) throw new Error('Other break ke liye reason likhein.');
+  if(n===3){const frozen=String((readRows_(master_().getSheetByName('SystemSettings')).find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE'; if(frozen) throw new Error('Ramadan Lunch Break abhi Admin ne freeze kiya hua hai.');}
   const rows=readRows_(sh); let row=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
-  if(!row){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}); row={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}; }
+  if(!row){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,extraBreakMinutes:0,break1NamazType:'',break1Start:'',break1End:'',break2NamazType:'',break2Start:'',break2End:'',break3Start:'',break3End:'',status:'PRESENT',approveStatus:'Not Approve',approvedBy:'',approvedAt:'',updatedAt:new Date()}); row={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,extraBreakMinutes:0,break1NamazType:'',break1Start:'',break1End:'',break2NamazType:'',break2Start:'',break2End:'',break3Start:'',break3End:'',status:'PRESENT',approveStatus:'Not Approve',approvedBy:'',approvedAt:'',updatedAt:new Date()}; }
   for(let i=1;i<n;i++) if(!row[`break${i}End`]) throw new Error(`Break ${i} pehle complete karein.`);
   const prefix=`break${n}`;
   const oldMinutes=[1,2,3].reduce((sum,i)=>sum+minutesBetween_(row[`break${i}Start`],row[`break${i}End`]),0);
-  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins;
+  const patch={}; if(n<3) patch[`${prefix}NamazType`]=namaz; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins;
   const projected=Object.assign({},row,patch); patch.extraBreakMinutes=Math.round(calculateExtraBreakMinutesFromRow_(projected));
   if(normalizeTime_(row.in)&&normalizeTime_(row.out)) patch.officeMinutes=calculateDutyMinutes_(row.in,row.out,projected);
   patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
-  appendActivity_(f,user,'Attendance Break',`${type}${namazType?` (${namazType})`:''} · ${start}-${end} · ${date}`);
-  return {date,breakNo:n,breakType:type,namazType:namazType||'',startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
+  appendActivity_(f,user,'Attendance Break',`${type}${namaz?` (${namaz})`:''} · ${start}-${end} · ${date}`);
+  markSync_(user.username,'ATTENDANCE');
+  return {date,breakNo:n,breakType:type,namazType:namaz,startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
 }
 
 function getNotesSheet_(){
@@ -1043,15 +1098,31 @@ function syncCursorFromRows_(rows){
   return max ? new Date(max).toISOString() : new Date().toISOString();
 }
 function markSync_(username,module){
+  const stamp=new Date().toISOString();
   try{
-    PropertiesService.getScriptProperties().setProperty('OTR_SYNC_'+String(module||'ALL')+'_'+String(username||''),new Date().toISOString());
+    const mod=String(module||'ALL'), user=String(username||'');
+    const props=PropertiesService.getScriptProperties();
+    props.setProperty('OTR_SYNC_'+mod+'_'+user,stamp);
+    props.setProperty('OTR_SYNCVER_'+mod+'_'+user,stamp);
   }catch(e){}
+  invalidateDashboardCache_(username);
 }
 
 function tasks_(s,month,year,since) {
-  const user=findUser_(s.username), rows=readRows_(getEmployeeFile_(user).getSheetByName('Tasks'));
+  const user=findUser_(s.username);
   const m=month?Number(month):0, y=year?Number(year):0;
-  const filtered=(m&&y)?rows.filter(r=>{const d=normalizeAttendanceDate_(r.date);return d&&Number(d.slice(5,7))===m&&Number(d.slice(0,4))===y;}):rows;
+  const file=getEmployeeFile_(user);
+  const taskSheet=file.getSheetByName('Tasks');
+  migrateTaskAssignmentsV74_(taskSheet);
+  const version=PropertiesService.getScriptProperties().getProperty('OTR_SYNCVER_TASKS_'+String(user.username))||'';
+  const cacheKey='OTR_TASK_ROWS_'+String(user.username)+'_'+String(y||0)+'_'+String(m||0)+'_'+version.replace(/[^A-Za-z0-9]/g,'').slice(-20);
+  let filtered=null;
+  try{const hit=CacheService.getScriptCache().get(cacheKey);if(hit) filtered=JSON.parse(hit);}catch(e){}
+  if(!Array.isArray(filtered)){
+    const rows=readRows_(taskSheet);
+    filtered=(m&&y)?rows.filter(r=>taskOverlapsMonth_(r,m,y)):rows;
+    try{CacheService.getScriptCache().put(cacheKey,JSON.stringify(filtered),20);}catch(e){}
+  }
   const cursor=syncCursorFromRows_(filtered);
   let out=filtered;
   if(since){
@@ -1063,12 +1134,16 @@ function tasks_(s,month,year,since) {
 
 function taskAction_(s,id,type,progress,note,minutes) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
+  migrateTaskAssignmentsV74_(sh);
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id));
   if(!row) throw new Error('Task not found.');
   const now=new Date(), time=formatDateTime_(now), action=String(type||'').toUpperCase();
   if(action==='START') updateByKey_(sh,'id',id,{status:'IN_PROGRESS',startTime:time,updatedAt:now});
   else if(action==='COMPLETE') {
+    const endDate=normalizeAttendanceDate_(row.assignmentTo||row.due||row.date);
+    const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+    if(endDate && today<endDate) throw new Error(`Task ${endDate} se pehle complete nahi ki ja sakti.`);
     const actual=row.startTime?Math.max(0,Math.round((now-new Date(row.startTime))/60000)):Number(row.actualMinutes||0);
     updateByKey_(sh,'id',id,{status:'COMPLETED',completedTime:time,actualMinutes:actual,progress:100,updatedAt:now});
   } else if(action==='SAVE_TIME') {
@@ -1095,11 +1170,11 @@ function assignTask_(s,t) {
   const user=findUser_(t.username); if(!user || String(user.status||'ACTIVE')!=='ACTIVE') throw new Error('Selected employee is not active.');
   if(!['EMPLOYEE','HOD'].includes(String(user.role))) throw new Error('Task sirf Employee/HOD ko assign kiya ja sakta hai.');
   const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const date=normalizeAttendanceDate_(t.date)||Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   const due=normalizeAttendanceDate_(t.due)||date;
   const taskId=Utilities.getUuid();
-  appendObject_(sh,{id:taskId,date:date,name:String(t.name).trim(),details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:due,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,expectedMinutes:Number(t.expectedMinutes||0)||'',progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date()});
+  appendObject_(sh,{id:taskId,date:date,name:String(t.name).trim(),details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:due,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date(),approvalStatus:'Not Approve',approvedBy:'',approvedAt:''});
   appendActivity_(file,user,'Task Assigned',`${t.name} · due ${due}`);
   notifyUsers_([user.username],'New Task Assigned',`${t.name} task aapko ${s.name||s.username} ne assign ki hai. Due: ${due}.`,'TASK');
   markSync_(user.username,'TASKS');
@@ -1111,6 +1186,9 @@ function taskProgress_(s,id,progress,note) {
   const user=findUser_(s.username), sh=getEmployeeFile_(user).getSheetByName('Tasks');
   const n=Number(progress); if(!Number.isFinite(n)||n<0||n>100) throw new Error('Progress 0 se 100 ke beech hona chahiye.');
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id)); if(!row) throw new Error('Task not found.');
+  const endDate=normalizeAttendanceDate_(row.assignmentTo||row.due||row.date);
+  const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+  if(n>=100 && endDate && today<endDate) throw new Error(`Task ${formatAttendanceDate_(endDate)} se pehle complete nahi ki ja sakti.`);
   const status=n>=100?'COMPLETED':(n>0?'IN_PROGRESS':(row.status||'ASSIGNED'));
   updateByKey_(sh,'id',id,{progress:n,progressNote:String(note||''),status:status,updatedAt:new Date(),completedTime:n>=100?formatDateTime_(new Date()):row.completedTime||''});
   markSync_(user.username,'TASKS');
@@ -1124,8 +1202,8 @@ function taskTime_(s,id,type,minutes) {
   const n=Number(minutes||0); if(!Number.isFinite(n)||n<0||n>1440) throw new Error('Invalid task minutes.');
   const current=Number(row.actualMinutes||0), total=current+n;
   updateByKey_(sh,'id',id,{actualMinutes:total,updatedAt:new Date()});
-  const tSh=f.getSheetByName('TaskTime'); ensureHeaderColumns_(tSh,['taskId','date','start','end','minutes','type']);
-  appendObject_(tSh,{taskId:id,date:Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'),start:formatDateTime_(new Date()),end:'',minutes:n,type:type||'MANUAL'});
+  // Task minutes are stored in Tasks.actualMinutes; no separate TaskTime sheet is created.
+  const taskLogDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   markSync_(user.username,'TASKS');
   audit_(s,'UPDATE','TASK_TIME',`${row.name} +${n} min`);
   return {actualMinutes:total};
@@ -1192,6 +1270,50 @@ function deleteTemplate_(s,templateId) {
   throw new Error('Template not found.');
 }
 
+function taskOverlapsMonth_(r,m,y){
+  const monthStart=new Date(Date.UTC(y,m-1,1));
+  const monthEnd=new Date(Date.UTC(y,m,0));
+  const from=normalizeAttendanceDate_(r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${r.assignmentYear}-${String(r.assignmentMonth).padStart(2,'0')}-${String(r.assignmentFrom).padStart(2,'0')}`:(r.date||''));
+  const to=normalizeAttendanceDate_(r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${r.assignmentYear}-${String(r.assignmentMonth).padStart(2,'0')}-${String(r.assignmentTo||r.assignmentFrom).padStart(2,'0')}`:(r.due||r.date||''));
+  if(!from||!to) return false;
+  const a=new Date(from+'T00:00:00Z'), b=new Date(to+'T00:00:00Z');
+  return a<=monthEnd && b>=monthStart;
+}
+function migrateTaskAssignmentsV74_(sh){
+  if(!sh) return;
+  const props=PropertiesService.getScriptProperties(), key='OTR_TASK_MIGRATED_V74_'+sh.getParent().getId();
+  if(props.getProperty(key)==='1') return;
+  const data=sh.getDataRange().getValues(); if(data.length<2){props.setProperty(key,'1');return;}
+  const headers=data[0].map(String), idx=index_(headers); if(idx.assignmentKey===undefined){props.setProperty(key,'1');return;}
+  const groups={};
+  for(let i=1;i<data.length;i++){const k=String(data[i][idx.assignmentKey]||''); if(k)(groups[k]||(groups[k]=[])).push(i);}
+  const deleteRows=[];
+  Object.keys(groups).forEach(k=>{
+    const rows=groups[k]; if(rows.length<2)return;
+    const keep=rows[0]; let total=0, maxProgress=0, earliestStart='', latestCompleted='', latestUpdated='';
+    rows.forEach(ri=>{
+      total+=safeFiniteNumber_(data[ri][idx.actualMinutes],0); maxProgress=Math.max(maxProgress,safeFiniteNumber_(data[ri][idx.progress],0));
+      const st=String(data[ri][idx.startTime]||''); if(st && (!earliestStart||st<earliestStart))earliestStart=st;
+      const ct=String(data[ri][idx.completedTime]||''); if(ct && ct>latestCompleted)latestCompleted=ct;
+      const ut=String(data[ri][idx.updatedAt]||''); if(ut && ut>latestUpdated)latestUpdated=ut;
+    });
+    if(idx.actualMinutes!==undefined)data[keep][idx.actualMinutes]=total;
+    if(idx.progress!==undefined)data[keep][idx.progress]=maxProgress;
+    if(idx.startTime!==undefined)data[keep][idx.startTime]=earliestStart;
+    if(idx.completedTime!==undefined)data[keep][idx.completedTime]=latestCompleted;
+    if(idx.updatedAt!==undefined)data[keep][idx.updatedAt]=latestUpdated||new Date();
+    const end=normalizeAttendanceDate_(data[keep][idx.assignmentTo]||data[keep][idx.due]||data[keep][idx.date]);
+    const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+    if(idx.status!==undefined && maxProgress>=100 && end && today>=end)data[keep][idx.status]='COMPLETED';
+    rows.slice(1).forEach(ri=>deleteRows.push(ri+1));
+  });
+  if(deleteRows.length){
+    const range=sh.getDataRange(); range.setValues(data);
+    deleteRows.sort((a,b)=>b-a).forEach(r=>sh.deleteRow(r));
+  }
+  props.setProperty(key,'1');
+}
+
 function assignTemplate_(s,templateId,username,month,year,fromDay,toDay) {
   assertAdmin_(s);
   if(!templateId || !username) throw new Error('Template aur Employee/HOD select karein.');
@@ -1209,15 +1331,13 @@ function assignTemplate_(s,templateId,username,month,year,fromDay,toDay) {
   if(from<1||to<1||from>to||from>daysInMonth) throw new Error(`Task period ${y}-${String(m).padStart(2,'0')} ke andar valid hona chahiye.`);
   const safeTo=Math.min(to,daysInMonth);
   const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
-  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey']);
+  ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const key=[templateId,username,y,m,from,safeTo].join('|');
   const existing=readRows_(sh).some(r=>String(r.assignmentKey||'')===key);
   if(existing) throw new Error('Yeh template is employee ke liye isi month/year aur period mein pehle hi assign ho chuka hai.');
-  const tasks=[];
-  for(let day=from;day<=safeTo;day++){
-    const date=`${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    tasks.push({id:Utilities.getUuid(),date:date,name:t.name,details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:date,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,expectedMinutes:'',progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date(),assignmentMonth:m,assignmentYear:y,assignmentFrom:from,assignmentTo:safeTo,assignmentKey:key});
-  }
+  const startDate=`${y}-${String(m).padStart(2,'0')}-${String(from).padStart(2,'0')}`;
+  const endDate=`${y}-${String(m).padStart(2,'0')}-${String(safeTo).padStart(2,'0')}`;
+  const tasks=[{id:Utilities.getUuid(),date:startDate,name:t.name,details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:endDate,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date(),assignmentMonth:m,assignmentYear:y,assignmentFrom:from,assignmentTo:safeTo,assignmentKey:key,approvalStatus:'Not Approve',approvedBy:'',approvedAt:''}];
   if(tasks.length){
     const headers=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(String);
     const values=tasks.map(o=>headers.map(h=>o[h]!==undefined?o[h]:''));
@@ -1269,7 +1389,7 @@ function createEmployee_(s,e) {
   appendObject_(sh,{name:e.name,employeeId:employeeCode,username:username,role:e.role||'EMPLOYEE',password:password,department:e.department||'',designation:e.designation||'',phone:e.phone||'',whatsapp:e.whatsapp||'',office:e.office||'',address:e.address||'',country:e.country||'',region:e.region||'',state:e.state||'',division:e.division||'',district:e.district||'',status:'ACTIVE',createdAt:new Date(),updatedAt:new Date()});
   invalidateUsersCache_();
   const u=findUser_(username);
-  saveEmployeeSettings_(u,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay});
+  saveEmployeeSettings_(u,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay,email:e.email||''});
   if(e.photoDataUrl) uploadProfilePhotoForAdmin_(s,u,e.photoFileName,e.photoDataUrl,e.photoMimeType);
   const file=getEmployeeFile_(u);
   invalidateUsersCache_();
@@ -1300,7 +1420,7 @@ function updateEmployee_(s,e) {
   }
   updateByKey_(sh,'username',e.username,patch);
   const updatedUser=findUser_(e.username);
-  saveEmployeeSettings_(updatedUser,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay});
+  saveEmployeeSettings_(updatedUser,{officeCity:e.office||'',officeAddress:e.address||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay,email:e.email||''});
   if(e.photoDataUrl) uploadProfilePhotoForAdmin_(s,updatedUser,e.photoFileName,e.photoDataUrl,e.photoMimeType);
   invalidateUsersCache_();
   audit_(s,'UPDATE','EMPLOYEE',`${e.name} / ${e.employeeId || e.code || ''}`);
@@ -1326,10 +1446,10 @@ function syncEmployeeProfile_(e) {
   const file=getEmployeeFile_(user);
   const sh=file.getSheetByName('Profile');
   if(!sh) return;
-  ensureHeaderColumns_(sh,['name','employeeId','username','role','department','designation','phone','whatsapp','office','address','country','region','state','division','district','officeInTime','officeOutTime','weekoffDay','year']);
+  ensureHeaderColumns_(sh,['name','employeeId','username','role','department','designation','phone','whatsapp','email','office','address','country','region','state','division','district','officeInTime','officeOutTime','weekoffDay','year']);
   updateByKey_(sh,'username',e.username,{
     name:e.name,employeeId:e.employeeId || e.code || e.employeeCode || '',role:e.role||'EMPLOYEE',department:e.department||'',
-    designation:e.designation||'',phone:e.phone||'',whatsapp:e.whatsapp||'',
+    designation:e.designation||'',phone:e.phone||'',whatsapp:e.whatsapp||'',email:e.email||'',
     office:e.office||'',address:e.address||'',country:e.country||'',region:e.region||'',
     state:e.state||'',division:e.division||'',district:e.district||'',officeInTime:e.officeInTime||'',officeOutTime:e.officeOutTime||'',weekoffDay:e.weekoffDay||''
   });
@@ -1337,6 +1457,98 @@ function syncEmployeeProfile_(e) {
 
 function assertMasterAdmin_(s) {
   if(String(s.role)!=='MASTER_ADMIN') throw new Error('Only Master Admin can manage users.');
+}
+
+
+function approvalCenter_(s) {
+  assertAdmin_(s);
+  const users=readUsersCached_().filter(function(u){return String(u.status||'ACTIVE')==='ACTIVE' && ['EMPLOYEE','HOD'].includes(String(u.role||''));});
+  const tasks=[], attendance=[];
+  users.forEach(function(u){
+    try{
+      const f=getEmployeeFile_(u);
+      const tsh=f.getSheetByName('Tasks');
+      if(tsh){
+        ensureHeaderColumns_(tsh,['id','date','name','category','priority','due','status','actualMinutes','approvalStatus','approvedBy','approvedAt','updatedAt']);
+        readRows_(tsh).forEach(function(r){
+          if(normalizeApprovalStatus_(r.approvalStatus||'')!=='Approve') tasks.push({key:u.username+'|'+r.id,id:r.id,username:u.username,employee:u.name,employeeId:u.employeeId||'',name:r.name||'',category:r.category||'',period:formatTaskPeriodServer_(r),status:r.status||'ASSIGNED',actualMinutes:Number(r.actualMinutes||0),approvalStatus:'Not Approve'});
+        });
+      }
+      const ash=f.getSheetByName('Attendance');
+      if(ash){
+        ensureHeaderColumns_(ash,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','status','approveStatus','approvedBy','approvedAt','updatedAt']);
+        readRows_(ash).forEach(function(r){
+          if(normalizeApprovalStatus_(r.approveStatus||'')!=='Approve') attendance.push({key:u.username+'|'+normalizeAttendanceDate_(r.date),date:normalizeAttendanceDate_(r.date)||String(r.date||''),username:u.username,employee:u.name,employeeId:u.employeeId||'',in:normalizeTime_(r.in),out:normalizeTime_(r.out),officeMinutes:calculateDutyMinutes_(r.in,r.out,r),breakMinutes:calculateBreakMinutesFromRow_(r),status:normalizeAttendanceStatus_(r.status||''),approvalStatus:'Not Approve'});
+        });
+      }
+    }catch(e){}
+  });
+  tasks.sort(function(a,b){return String(b.period).localeCompare(String(a.period));});
+  attendance.sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+  return {tasks:tasks.slice(0,500),attendance:attendance.slice(0,500),taskPendingCount:tasks.length,attendancePendingCount:attendance.length};
+}
+function formatTaskPeriodServer_(r){
+  const from=r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${r.assignmentYear}-${String(r.assignmentMonth).padStart(2,'0')}-${String(r.assignmentFrom).padStart(2,'0')}`:(normalizeAttendanceDate_(r.date)||'');
+  const to=r.assignmentFrom&&r.assignmentMonth&&r.assignmentYear?`${r.assignmentYear}-${String(r.assignmentMonth).padStart(2,'0')}-${String(r.assignmentTo||r.assignmentFrom).padStart(2,'0')}`:(normalizeAttendanceDate_(r.due)||normalizeAttendanceDate_(r.date)||'');
+  return `${from} To ${to}`;
+}
+function updateApprovalRecord_(s,kind,username,id,status){
+  const user=findUser_(username); if(!user) throw new Error('Employee not found.');
+  const f=getEmployeeFile_(user), now=new Date(), actor=findUser_(s.username), label=String(status).toUpperCase()==='APPROVED'?'Approve':'Not Approve';
+  if(kind==='TASK'){
+    const sh=f.getSheetByName('Tasks'); if(!sh) throw new Error('Task sheet not found.');
+    ensureHeaderColumns_(sh,['id','approvalStatus','approvedBy','approvedAt','updatedAt']);
+    const rows=readRows_(sh), row=rows.find(function(r){return String(r.id)===String(id);}); if(!row) throw new Error('Task not found.');
+    updateByKey_(sh,'id',id,{approvalStatus:label,approvedBy:actor?actor.name:s.username,approvedAt:now,updatedAt:now});
+    audit_(s,'APPROVAL','TASK',`${row.name} / ${user.name} = ${label}`);
+    notifyUsers_([username],'Task Approval Updated',`${row.name} ki task approval ${label.toLowerCase()} ki gayi by ${actor?actor.name:s.username}.`,'APPROVAL');
+  } else if(kind==='ATTENDANCE'){
+    const sh=f.getSheetByName('Attendance'); if(!sh) throw new Error('Attendance sheet not found.');
+    ensureHeaderColumns_(sh,['date','approveStatus','approvedBy','approvedAt','updatedAt']);
+    const rows=readRows_(sh), row=rows.find(function(r){return normalizeAttendanceDate_(r.date)===String(id);}); if(!row) throw new Error('Attendance record not found.');
+    updateByKey_(sh,'date',id,{approveStatus:label,approvedBy:actor?actor.name:s.username,approvedAt:now,updatedAt:now});
+    audit_(s,'APPROVAL','ATTENDANCE',`${user.name} / ${id} = ${label}`);
+    notifyUsers_([username],'Attendance Approval Updated',`${id} ki attendance approval ${label.toLowerCase()} ki gayi by ${actor?actor.name:s.username}.`,'APPROVAL');
+  } else throw new Error('Invalid approval type.');
+}
+function approvalItem_(s,kind,username,id,status){
+  assertAdmin_(s); updateApprovalRecord_(s,kind,username,id,status); return {};
+}
+function bulkApproval_(s,kind,items,status,all){
+  assertAdmin_(s);
+  let list=Array.isArray(items)?items:[];
+  if(all){
+    const users=readUsersCached_().filter(function(u){return String(u.status||'ACTIVE')==='ACTIVE' && ['EMPLOYEE','HOD'].includes(String(u.role||''));});
+    list=[];
+    users.forEach(function(u){
+      try{
+        const f=getEmployeeFile_(u), sh=f.getSheetByName(kind==='TASK'?'Tasks':'Attendance'); if(!sh)return;
+        readRows_(sh).forEach(function(r){
+          const approved=normalizeApprovalStatus_(kind==='TASK'?r.approvalStatus:r.approveStatus)==='Approve';
+          if(!approved) list.push({username:u.username,id:kind==='TASK'?r.id:normalizeAttendanceDate_(r.date)});
+        });
+      }catch(e){}
+    });
+  }
+  if(!list.length) return {count:0};
+  const lock=LockService.getScriptLock(); if(!lock.tryLock(30000)) throw new Error('Approval update already running. Please try again.');
+  try{
+    const grouped={}; list.forEach(function(x){if(!x||!x.username||!x.id)return;(grouped[x.username]||(grouped[x.username]=[])).push(String(x.id));});
+    const actor=findUser_(s.username), label=String(status).toUpperCase()==='APPROVED'?'Approve':'Not Approve'; let total=0;
+    Object.keys(grouped).forEach(function(username){
+      const u=findUser_(username); if(!u)return;
+      const f=getEmployeeFile_(u), sh=f.getSheetByName(kind==='TASK'?'Tasks':'Attendance'); if(!sh)return;
+      const required=kind==='TASK'?['id','approvalStatus','approvedBy','approvedAt','updatedAt']:['date','approveStatus','approvedBy','approvedAt','updatedAt'];
+      ensureHeaderColumns_(sh,required);
+      const range=sh.getDataRange(), values=range.getValues(); if(!values.length)return;
+      const headers=values[0].map(String), idx=index_(headers), idCol=kind==='TASK'?idx.id:idx.date, approvalCol=kind==='TASK'?idx.approvalStatus:idx.approveStatus;
+      const byId={}; for(let i=1;i<values.length;i++){const key=kind==='TASK'?String(values[i][idCol]||''):normalizeAttendanceDate_(values[i][idCol]); if(key)byId[key]=i;}
+      const ids=grouped[username], now=new Date(); let changed=0;
+      ids.forEach(function(id){const ri=byId[String(id)]; if(ri===undefined)return; values[ri][approvalCol]=label; if(idx.approvedBy!==undefined)values[ri][idx.approvedBy]=actor?actor.name:s.username; if(idx.approvedAt!==undefined)values[ri][idx.approvedAt]=now; if(idx.updatedAt!==undefined)values[ri][idx.updatedAt]=now; changed++;});
+      if(changed){range.setValues(values);total+=changed;markSync_(username,kind==='TASK'?'TASKS':'ATTENDANCE');notifyUsers_([username],kind==='TASK'?'Task Approval Updated':'Attendance Approval Updated',`${changed} ${kind==='TASK'?'task':'attendance'} record(s) ${label.toLowerCase()} kiye gaye by ${actor?actor.name:s.username}.`,'APPROVAL');audit_(s,'BULK_APPROVAL',kind,`${u.name}: ${changed} = ${label}`);}
+    });
+    return {count:total};
+  } finally {lock.releaseLock();}
 }
 
 function approvals_(s) {
@@ -1413,7 +1625,7 @@ function advancedReports_(s,range){
       if(status==='Present'){present++; attendanceSummary.Present++;} else if(status==='Leave'){leave++; attendanceSummary.Leave++;} else if(status==='Holiday'){holiday++; attendanceSummary.Holiday++;} else if(status==='Weekly Off'){weekoff++; attendanceSummary['Weekly Off']++;} else if(status==='Absent'){absent++; attendanceSummary.Absent++;} else {attendanceSummary.Other++;}
       const bm=Number(r.breakMinutes||calculateBreakMinutesFromRow_(r)||0); const xb=Number(r.extraBreakMinutes||calculateExtraBreakMinutesFromRow_(r)||0); breakM+=bm; extraBreakM+=xb;
       for(let i=1;i<=3;i++){
-        const type=String(r[`break${i}Type`]||'').trim(), namaz=String(r[`break${i}NamazType`]||'').trim();
+        const type=i===3?'Lunch':'Namaz', namaz=String(r[`break${i}NamazType`]||'').trim();
         const mins=minutesBetween_(normalizeTime_(r[`break${i}Start`]),normalizeTime_(r[`break${i}End`])); if(!mins)continue;
         const label=type==='Lunch'?'Lunch Time':(namaz?`Namaz - ${namaz}`:'Break');
         breakTotals[label]=(breakTotals[label]||0)+mins;
@@ -1526,18 +1738,18 @@ function employeeSettings_(user){
   const sh=master_().getSheetByName('EmployeeSettings'); if(!sh) return defaults;
   const row=readRows_(sh).find(function(r){return String(r.employeeId)===String(user.employeeId);});
   if(!row) return defaults;
-  return {officeCity:row.officeCity||defaults.officeCity,officeAddress:row.officeAddress||defaults.officeAddress,officeInTime:row.officeInTime||defaults.officeInTime,officeOutTime:row.officeOutTime||defaults.officeOutTime,weekoffDay:row.weekoffDay===''||row.weekoffDay===undefined?defaults.weekoffDay:String(row.weekoffDay)};
+  return {officeCity:row.officeCity||defaults.officeCity,officeAddress:row.officeAddress||defaults.officeAddress,officeInTime:row.officeInTime||defaults.officeInTime,officeOutTime:row.officeOutTime||defaults.officeOutTime,weekoffDay:row.weekoffDay===''||row.weekoffDay===undefined?defaults.weekoffDay:String(row.weekoffDay),email:row.email||''};
 }
 function saveEmployeeSettings_(user,settings){
   if(!user || !user.employeeId) return;
   const sh=master_().getSheetByName('EmployeeSettings'); if(!sh) return;
-  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt']);
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(function(r){return String(r.employeeId)===String(user.employeeId);});
   let day=settings.weekoffDay;
   if(day===''||day===null||day===undefined){
     const sr=readRows_(master_().getSheetByName('SystemSettings')).find(function(r){return r.key==='WEEKOFF_DAY';}); day=sr?sr.value:'0';
   }
-  const obj={employeeId:user.employeeId,username:user.username,officeCity:settings.officeCity||user.office||'',officeAddress:settings.officeAddress||user.address||'',officeInTime:settings.officeInTime||'',officeOutTime:settings.officeOutTime||'',weekoffDay:String(day),updatedAt:new Date()};
+  const obj={employeeId:user.employeeId,username:user.username,officeCity:settings.officeCity||user.office||'',officeAddress:settings.officeAddress||user.address||'',officeInTime:settings.officeInTime||'',officeOutTime:settings.officeOutTime||'',weekoffDay:String(day),email:(settings.email!==undefined&&String(settings.email).trim()!=='')?String(settings.email).trim():(existing&&existing.email?existing.email:''),updatedAt:new Date()};
   if(existing) updateByKey_(sh,'employeeId',user.employeeId,obj); else appendObject_(sh,obj);
 }
 
@@ -1642,18 +1854,9 @@ function getStoredPhoto_(employeeId){
   }catch(e){}
   if(!row) return {photoUrl:'',photoDataUrl:'',photoFileId:'',photoPath:''};
   let photoUrl=String(row.photoUrl||'');
-  let photoDataUrl='';
   const fileId=String(row.photoFileId||'');
-  if(fileId){
-    try{
-      const file=DriveApp.getFileById(fileId);
-      const blob=file.getBlob();
-      const mime=blob.getContentType()||'image/jpeg';
-      photoDataUrl='data:'+mime+';base64,'+Utilities.base64Encode(blob.getBytes());
-      if(!photoUrl) photoUrl='https://drive.google.com/uc?export=view&id='+fileId;
-    }catch(e){}
-  }
-  return {photoUrl:photoUrl,photoDataUrl:photoDataUrl,photoFileId:fileId,photoPath:String(row.photoPath||'')};
+  if(!photoUrl && fileId) photoUrl='https://drive.google.com/uc?export=view&id='+fileId;
+  return {photoUrl:photoUrl,photoDataUrl:'',photoFileId:fileId,photoPath:String(row.photoPath||'')};
 }
 
 function employeeProfile_(s,username){
@@ -1724,17 +1927,21 @@ function profileUpdate_(s,p){
   const u=findUser_(s.username); if(!u) throw new Error('User not found.');
   p=p||{};
   const phone=String(p.phone!==undefined?p.phone:u.phone||'').trim();
-  const email=String(p.email!==undefined?p.email:'').trim();
-  if(p.phone===undefined && p.email===undefined) throw new Error('Profile mein Mobile Number ya Email Id update karein.');
+  const email=String(p.email!==undefined?p.email:(u.email||'')).trim();
+  if(p.phone===undefined && p.email===undefined && !p.photoDataUrl) throw new Error('Profile mein Mobile Number, Email Id ya Photo update karein.');
   const usersSh=master_().getSheetByName('Users');
   if(p.phone!==undefined) updateByKey_(usersSh,'username',u.username,{phone:phone,updatedAt:new Date()});
   const sh=master_().getSheetByName('EmployeeSettings');
   ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt']);
   const existing=readRows_(sh).find(function(r){return String(r.employeeId)===String(u.employeeId);});
   if(existing) updateByKey_(sh,'employeeId',u.employeeId,{email:email,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,email:email,updatedAt:new Date()});
+  let photo={};
+  if(p.photoDataUrl){
+    photo=uploadProfilePhotoForAdmin_(s,u,p.photoFileName,p.photoDataUrl,p.photoMimeType,true);
+  }
   invalidateUsersCache_();
-  audit_(s,'UPDATE','PROFILE','Employee updated own mobile/email');
-  return {success:true};
+  audit_(s,'UPDATE','PROFILE','Employee updated own mobile/email'+(p.photoDataUrl?' + photo':''));
+  return {success:true,photoUrl:photo.photoUrl||'',photoDataUrl:photo.photoDataUrl||'',photoFileId:photo.photoFileId||'',photoPath:photo.photoPath||''};
 }
 
 function changePassword_(s,currentPassword,newPassword){
@@ -1757,7 +1964,9 @@ function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
 // also lets User Create/Update save the photo in the same request, avoiding a
 // second API action that can fail when an older Worker/Apps Script deployment is live.
 function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,allowSelf){
-  if(!allowSelf || !['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role))){ assertAdmin_(s); } else if(String(target.username)!==String(s.username) && !['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role))){ throw new Error('Access denied.'); }
+  const isAdmin=['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role));
+  const isSelf=target && String(target.username)===String(s.username);
+  if(!isAdmin && !(allowSelf && isSelf)) throw new Error('Aapko profile photo update karne ki permission nahi hai.');
   if(!target || !target.employeeId) throw new Error('Employee Id is required for profile photo.');
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
   const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
@@ -1782,7 +1991,7 @@ function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,allowSel
   const url='https://drive.google.com/uc?export=view&id='+fileId;
   const photoPath='G:\\My Drive\\Dashboard Working\\office-task-report\\Employees Photo';
   const sh=master_().getSheetByName('EmployeeSettings');
-  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt']);
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(target.employeeId));
   const obj={photoUrl:url,photoFileId:fileId,photoPath:photoPath,updatedAt:new Date()};
   if(existing) updateByKey_(sh,'employeeId',target.employeeId,obj);
@@ -1799,7 +2008,14 @@ function getEmployeeFile_(u) {
   const folder=DriveApp.getFolderById(props.getProperty('EMPLOYEE_FOLDER_ID'));
   const targetName=`${u.name}_${u.employeeCode}_${year}`;
   const existing=folder.getFilesByName(targetName);
-  if(existing.hasNext()) return SpreadsheetApp.open(existing.next());
+  if(existing.hasNext()) {
+    const ss=SpreadsheetApp.open(existing.next());
+    const props=PropertiesService.getScriptProperties();
+    if(props.getProperty('OTR_EMP_SCHEMA_'+ss.getId())!==EMPLOYEE_SHEETS_SCHEMA_VERSION){
+      setupEmployeeSheets_(ss,u);
+    }
+    return ss;
+  }
   const ss=SpreadsheetApp.create(targetName);
   const file=DriveApp.getFileById(ss.getId());
   folder.addFile(file); DriveApp.getRootFolder().removeFile(file);
@@ -1808,24 +2024,42 @@ function getEmployeeFile_(u) {
 }
 
 function setupEmployeeSheets_(ss,u) {
-  const first=ss.getSheets()[0]; first.setName('Profile');
   const map={
-    Profile:['name','employeeId','username','role','department','designation','phone','whatsapp','office','address','country','region','state','division','district','year'],
-    Attendance:['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt'],
-    Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey'],
-    TaskTime:['taskId','date','start','end','minutes'],
-    Leave:['id','from','to','type','reason','status','createdAt'],
+    Profile:['name','employeeId','username','role','department','designation','phone','whatsapp','email','office','address','country','region','state','division','district','officeInTime','officeOutTime','weekoffDay','year'],
+    Attendance:['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt'],
+    Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt'],
     Requests:['id','type','date','details','startTime','endTime','meetingMode','adjustmentField','adjustmentTime','status','createdAt'],
-    Activities:['time','title','details'],
-    Notifications:['time','title','message','type','read']
+    Activities:['time','title','details']
   };
-  Object.keys(map).forEach(name=>{
-    const sh=name==='Profile'?first:ss.insertSheet(name);
-    sh.getRange(1,1,1,map[name].length).setValues([map[name]]);
+  // Rebuild only the employee-file structure, preserving all data whose column names still exist.
+  normalizeEmployeeSheets_(ss,map);
+  const p=ss.getSheetByName('Profile');
+  const settings=employeeSettings_(u);
+  const existingRows=p.getLastRow()>1 ? readRows_(p) : [];
+  const obj={name:u.name,employeeId:u.employeeCode,username:u.username,role:u.role,department:u.department||'',designation:u.designation||'',phone:u.phone||'',whatsapp:u.whatsapp||'',email:settings.email||'',office:u.office||'',address:u.address||'',country:u.country||'',region:u.region||'',state:u.state||'',division:u.division||'',district:u.district||'',officeInTime:settings.officeInTime||u.officeInTime||'',officeOutTime:settings.officeOutTime||u.officeOutTime||'',weekoffDay:settings.weekoffDay||u.weekoffDay||'',year:new Date().getFullYear()};
+  if(!existingRows.length){ appendObject_(p,obj); }
+  PropertiesService.getScriptProperties().setProperty('OTR_EMP_SCHEMA_'+ss.getId(),EMPLOYEE_SHEETS_SCHEMA_VERSION);
+}
+
+function normalizeEmployeeSheets_(ss,map){
+  const wanted=Object.keys(map);
+  Object.keys(map).forEach(function(name){
+    let sh=ss.getSheetByName(name);
+    if(!sh) sh=ss.insertSheet(name);
+    const lastRow=sh.getLastRow(), lastCol=sh.getLastColumn();
+    const oldHeaders=lastRow>0&&lastCol>0?sh.getRange(1,1,1,lastCol).getValues()[0].map(function(h){return String(h||'').trim();}):[];
+    const data=lastRow>1&&lastCol>0?sh.getRange(2,1,lastRow-1,lastCol).getValues():[];
+    const index={}; oldHeaders.forEach(function(h,i){if(h && index[h]===undefined) index[h]=i;});
+    const expected=map[name];
+    const out=data.map(function(row){return expected.map(function(h){const i=index[h];return i===undefined?'':row[i];});});
+    if(sh.getMaxColumns()<expected.length) sh.insertColumnsAfter(sh.getMaxColumns(),expected.length-sh.getMaxColumns());
+    if(sh.getMaxColumns()>expected.length) sh.deleteColumns(expected.length+1,sh.getMaxColumns()-expected.length);
+    sh.clearContents();
+    sh.getRange(1,1,1,expected.length).setValues([expected]);
+    if(out.length) sh.getRange(2,1,out.length,expected.length).setValues(out);
     sh.setFrozenRows(1);
   });
-  const p=ss.getSheetByName('Profile');
-  p.getRange(2,1,1,16).setValues([[u.name,u.employeeCode,u.username,u.role,u.department,u.designation,u.phone,u.whatsapp,u.office,u.address,u.country||'',u.region||'',u.state||'',u.division||'',u.district||'',new Date().getFullYear()]]);
+  ss.getSheets().slice().forEach(function(sh){if(wanted.indexOf(sh.getName())===-1){try{ss.deleteSheet(sh);}catch(e){}}});
 }
 
 function monthTrend_(users) {
