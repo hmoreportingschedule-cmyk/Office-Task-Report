@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.56
+// Office Task Report V.57
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -136,7 +136,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   const items = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["attendance", "Attendance", Clock3],
-    ["tasks", "My Tasks", ClipboardList],
+    ["tasks", "Check Task", ClipboardList],
     ["templates", "Task Templates", FileText],
     ["employees", "Users", Users],
     ["approvals", "Approvals", CheckCircle2],
@@ -147,7 +147,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.56</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.57</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -344,28 +344,14 @@ function formatTime(v){const s=String(v||"").slice(0,5);if(!/^\d{2}:\d{2}$/.test
 
 function Tasks({session,notify}) {
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
-  const [rows,setRows]=useState([]), [users,setUsers]=useState([]), [busy,setBusy]=useState(true), [search,setSearch]=useState("");
-  const [form,setForm]=useState({username:"",name:"",category:"",priority:"Normal",date:new Date().toISOString().slice(0,10),due:new Date().toISOString().slice(0,10),details:"",expectedMinutes:""});
-  const taskNames=["Followup","File Work","Outdoor","Meeting","Other"];
-  const categories={Followup:["Monthly Report","Hind Mushawarat Task","HOD-Department Points Task","Data Required","Other"],"File Work":["Analise","Errors Cheking","Application Required Data","Other"],Outdoor:["Office Related","Journey","Tarbiyati Ijtima","3 Din Qafila","Other"],Meeting:["Online Meeting","Physicall Meeting","Other"],Other:["Other"]};
-  const load=async()=>{setBusy(true);try{const r=await api("tasks",{session});setRows(r.rows||[]);if(isAdmin){const u=await api("employees",{session});setUsers((u.rows||[]).filter(x=>x.status==="ACTIVE"&&["EMPLOYEE","HOD"].includes(x.role)));}}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const [rows,setRows]=useState([]), [busy,setBusy]=useState(true), [search,setSearch]=useState("");
+  const load=async()=>{setBusy(true);try{const r=await api("tasks",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   useEffect(()=>{load()},[]);
   const action=async(id,type)=>{try{await api("taskAction",{session,taskId:id,type});notify("success",type==="START"?"Task started.":type==="COMPLETE"?"Task completed.":"Task updated.");load()}catch(e){notify("error",e.message)}};
   const progress=async(r)=>{const value=window.prompt(`Progress % for ${r.name}`,String(r.progress||0));if(value===null)return;const note=window.prompt("Progress note (optional)",String(r.progressNote||""));try{await api("taskProgress",{session,taskId:r.id,progress:Number(value),note:note||""});notify("success","Task progress updated.");load()}catch(e){notify("error",e.message)}};
-  const assign=async(e)=>{e.preventDefault();try{await api("assignTask",{session,task:form});notify("success","Task assigned successfully.");setForm({...form,name:"",details:"",expectedMinutes:""});load()}catch(e){notify("error",e.message)}};
   const filtered=rows.filter(r=>Object.values(r).join(" ").toLowerCase().includes(search.toLowerCase()));
   return <div>
-    <PageHead title={isAdmin?"Task Management":"My Tasks"} subtitle={isAdmin?"Assign work, monitor status, timing and progress.":"Assigned work, progress, timing and completion."} action={<div className="search"><Search size={16}/><input placeholder="Search tasks…" value={search} onChange={e=>setSearch(e.target.value)}/></div>}/>
-    {isAdmin&&<section className="panel"><PanelTitle title="Assign Task"/><form className="form-grid" onSubmit={assign}>
-      <label>Employee<select value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required><option value="">Select Employee</option>{users.map(u=><option key={u.username} value={u.username}>{u.name} · {u.employeeId}</option>)}</select></label>
-      <label>Task Name<select value={form.name} onChange={e=>setForm({...form,name:e.target.value,category:(categories[e.target.value]||[])[0]||""})} required><option value="">Select Task</option>{taskNames.map(x=><option key={x}>{x}</option>)}</select></label>
-      <label>Category<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{(categories[form.name]||[]).map(x=><option key={x}>{x}</option>)}</select></label>
-      <label>Priority<select value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}><option>Low</option><option>Normal</option><option>High</option><option>Urgent</option></select></label>
-      <label>Task Date<input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label><label>Due Date<input type="date" value={form.due} onChange={e=>setForm({...form,due:e.target.value})}/></label>
-      <label>Expected Minutes<input type="number" min="0" value={form.expectedMinutes} onChange={e=>setForm({...form,expectedMinutes:e.target.value})}/></label>
-      <label className="full-span">Details<textarea value={form.details} onChange={e=>setForm({...form,details:e.target.value})} placeholder="Task details"/></label>
-      <button className="primary full-span"><Plus size={16}/> Assign Task</button>
-    </form></section>}
+    <PageHead title={isAdmin?"Task Management":"Check Task"} subtitle={isAdmin?"Check assigned tasks, status, timing and progress.":"Check your assigned tasks, progress, timing and completion."} action={<div className="search"><Search size={16}/><input placeholder="Search tasks…" value={search} onChange={e=>setSearch(e.target.value)}/></div>}/>
     <section className="panel">{busy?<Loader/>:<div className="table-wrap"><table><thead><tr><th>Task</th><th>Priority</th><th>Due</th><th>Status</th><th>Progress</th><th>Actual</th><th>Action</th></tr></thead><tbody>{filtered.length?filtered.map(r=><tr key={r.id}><td><b>{r.name}</b><small>{r.category}</small></td><td><span className={`priority ${String(r.priority).toLowerCase()}`}>{r.priority}</span></td><td>{r.due}</td><td><span className="status">{r.status}</span></td><td><div className="progress-cell"><b>{Number(r.progress||0)}%</b><div className="progress-track"><span style={{width:`${Math.min(100,Math.max(0,Number(r.progress||0)))}%`}}/></div></div></td><td>{r.actualMinutes||0} min</td><td><div className="table-actions">{r.status==="ASSIGNED"&&<button className="mini primary" onClick={()=>action(r.id,"START")}>Start</button>}{r.status==="IN_PROGRESS"&&<button className="mini primary" onClick={()=>action(r.id,"COMPLETE")}>Complete</button>}{!['COMPLETED','CANCELLED'].includes(r.status)&&<button className="mini secondary" onClick={()=>progress(r)}>Progress</button>}</div></td></tr>):<tr><td colSpan="7" className="empty">No tasks found.</td></tr>}</tbody></table></div>}</section>
   </div>
 }
@@ -382,7 +368,7 @@ function Templates({session,notify}) {
   const taskCategories = {
     "Followup":["Monthly Report","Hind Mushawarat Task","HOD-Department Points Task","Data Required","Other"],
     "File Work":["Analise","Errors Cheking","Application Required Data","Other"],
-    "Outdoor":["Office Related","Journey","Tarbiyati Ijtima","Other"],
+    "Outdoor":["Office Related","Journey","Tarbiyati Ijtima","3 Din Qafila","Other"],
     "Meeting":["Online Meeting","Physicall Meeting","Other"],
     "Other":["Other"]
   };
@@ -502,13 +488,15 @@ function Templates({session,notify}) {
 
 function Employees({session,notify}) {
   const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",officeInTime:"",officeOutTime:"",weekoffDay:"",country:"",region:"",state:"",division:"",district:""};
-  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false); const [profile,setProfile]=useState(null);
+  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false); const [profile,setProfile]=useState(null); const [photoFile,setPhotoFile]=useState(null); const [photoPreview,setPhotoPreview]=useState("");
   const weekDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const load=async()=>{try{const r=await api("employees",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
-  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
-  const reset=()=>{setForm(empty);setEditing(false)};
-  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setPhotoFile(null);setPhotoPreview("");setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
+  const reset=()=>{setForm(empty);setPhotoFile(null);setPhotoPreview("");setEditing(false)};
+  const selectEmployeePhoto=(e)=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return}if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return}setPhotoFile(f);const reader=new FileReader();reader.onload=()=>setPhotoPreview(String(reader.result||""));reader.readAsDataURL(f)};
+  const uploadEmployeePhotoForUser=async(username,file)=>{if(!file)return;const reader=new FileReader();return new Promise((resolve,reject)=>{reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,targetUsername:username,fileName:file.name,dataUrl:reader.result,mimeType:file.type});resolve(r)}catch(err){reject(err)}};reader.onerror=()=>reject(new Error("Photo read nahi ho saki."));reader.readAsDataURL(file)})};
+  const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});if(photoFile)await uploadEmployeePhotoForUser(form.username,photoFile);notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});if(photoFile)await uploadEmployeePhotoForUser(form.username,photoFile);notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e?.message||"User save nahi ho saka.")}finally{setBusy(false)}};
   const viewProfile=async(r)=>{try{const x=await api("employeeProfile",{session,username:r.username});setProfile(x.profile)}catch(e){notify("error",e.message)}};
   const uploadEmployeePhoto=async(e)=>{const f=e.target.files?.[0]; if(!f||!profile)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return} const reader=new FileReader(); reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,targetUsername:profile.username,fileName:f.name,dataUrl:reader.result,mimeType:f.type});setProfile(p=>({...p,photoUrl:r.photoUrl}));notify("success","Employee profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{e.target.value=""}}; reader.readAsDataURL(f)};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
@@ -521,6 +509,7 @@ function Employees({session,notify}) {
         <label>Employee Id<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
         <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing} autoComplete="username"/></label>
         <label>{editing ? "New Password (Optional)" : "Password"}<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete="new-password" required={!editing} minLength={4} placeholder={editing ? "Leave blank to keep current password" : "Enter login password"}/></label>
+        <label>Profile Photo<div className="admin-photo-field"><div className="admin-photo-preview">{photoPreview?<img src={photoPreview} alt="Selected profile"/>:<UserCircle2 size={34}/>}</div><input type="file" accept="image/*" onChange={selectEmployeePhoto}/><small>Admin/Master Admin se upload hoga · Max 2 MB</small></div></label>
         <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
         <label>Designation<input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})}/></label>
         <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
@@ -546,7 +535,7 @@ function Employees({session,notify}) {
         <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
         <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update User</> : <><Plus size={16}/> User Create</>}</button>
       </form>
-      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Office City</th><th>Office In</th><th>Office Out</th><th>Weekoff</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td><button className="link-button" onClick={()=>viewProfile(r)} title="View Employee Profile">{r.code}</button></td><td>{r.username}</td><td>{r.office}</td><td>{r.officeInTime||"-"}</td><td>{r.officeOutTime||"-"}</td><td>{r.weekoffLabel||"Default"}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="View Profile" onClick={()=>viewProfile(r)}><UserCircle2 size={14}/></button><button className="approve" title="Edit User" onClick={()=>edit(r)}><Pencil size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
+      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Office City</th><th>Office In</th><th>Office Out</th><th>Weekoff</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td><button className="link-button" onClick={()=>viewProfile(r)} title="View Employee Profile">{r.code}</button></td><td>{r.username}</td><td>{r.office}</td><td>{formatTime(r.officeInTime)}</td><td>{formatTime(r.officeOutTime)}</td><td>{r.weekoffLabel||"Default"}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="View Profile" onClick={()=>viewProfile(r)}><UserCircle2 size={14}/></button><button className="approve" title="Edit User" onClick={()=>edit(r)}><Pencil size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
     </div>
     {profile && <div className="modal-backdrop" onClick={()=>setProfile(null)}><div className="profile-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><h3>Employee Profile</h3><p>{profile.name}</p></div><button className="icon-btn" onClick={()=>setProfile(null)}><X size={18}/></button></div><div className="profile-head"><div className="profile-photo">{profile.photoUrl?<img src={profile.photoUrl} alt="Profile"/>:<UserCircle2 size={72}/>}<label className="photo-upload admin-photo-upload" title="Upload Employee Photo"><Camera size={14}/><input type="file" accept="image/*" onChange={uploadEmployeePhoto}/></label></div><div><h2>{profile.name}</h2><p>{profile.designation||profile.role}</p><span className="tag">Employee ID: {profile.employeeId||"-"}</span><small className="profile-note">Photo upload: Admin only</small></div></div><div className="profile-grid"><div><span>Office City</span><b>{profile.officeCity||"-"}</b></div><div><span>Office Address</span><b>{profile.officeAddress||"-"}</b></div><div><span>Office Time</span><b>{profile.officeInTime&&profile.officeOutTime?`${formatTime(profile.officeInTime)} To ${formatTime(profile.officeOutTime)}`:"-"}</b></div><div><span>Weekoff</span><b>{profile.weekoffLabel||"-"}</b></div><div><span>Department</span><b>{profile.department||"-"}</b></div><div><span>Contact</span><b>{profile.phone||"-"}</b></div></div></div></div>}
   </div>
