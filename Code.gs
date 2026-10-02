@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.62
+ * OFFICE TASK REPORT V.67
  * Google Apps Script backend
  *
  * Architecture:
@@ -8,7 +8,7 @@
  * Example: Asif_12345_2026
  */
 
-const USERS_SCHEMA_VERSION = 'V62_CUMULATIVE';
+const USERS_SCHEMA_VERSION = 'V67_CUMULATIVE';
 
 const CONFIG = {
   MASTER_NAME: 'office-task-report',
@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.65',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.67',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.65',
+      version:'V.67',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.65',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.67',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -181,7 +181,7 @@ function ensureBackend_() {
     AuditLog:['time','username','action','module','details'],
     Holidays:['id','date','name','type','createdBy','createdAt'],
     SystemSettings:['key','value','updatedAt'],
-    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt'],
+    EmployeeSettings:['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt'],
     AttendanceRoster:['employeeId','username','date','officeInTime','officeOutTime','weekoffDay','updatedAt']
   };
 
@@ -355,6 +355,8 @@ function route_(action,b) {
     case 'saveBreak': return saveBreak_(b.session,b.date,b.breakNo,b.breakType,b.namazType,b.startTime,b.endTime,b.reason);
     case 'notes': return notes_(b.session);
     case 'saveNote': return saveNote_(b.session,b.note);
+    case 'createNote': return saveNote_(b.session,b.note);
+    case 'addNote': return saveNote_(b.session,b.note);
     case 'tasks': return tasks_(b.session,b.month,b.year,b.since);
     case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes);
     case 'assignTask': return assignTask_(b.session,b.task);
@@ -995,13 +997,19 @@ function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reas
   return {date,breakNo:n,breakType:type,namazType:namazType||'',startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
 }
 
-function notes_(s){
-  const sh=master_().getSheetByName('Notes'); if(!sh) return {rows:[]};
+function getNotesSheet_(){
+  const ss=master_();
+  let sh=ss.getSheetByName('Notes');
+  if(!sh) sh=ss.insertSheet('Notes');
   ensureHeaderColumns_(sh,['id','username','role','text','date','time','createdAt']);
+  return sh;
+}
+function notes_(s){
+  const sh=getNotesSheet_();
   return {rows:readRows_(sh).filter(r=>String(r.username)===String(s.username)).slice(-100).reverse()};
 }
 function saveNote_(s,note){
-  const sh=master_().getSheetByName('Notes'); if(!sh) throw new Error('Notes sheet unavailable.');
+  const sh=getNotesSheet_();
   ensureHeaderColumns_(sh,['id','username','role','text','date','time','createdAt']);
   const text=String(note&&note.text||'').trim(); if(!text) throw new Error('Note text required hai.');
   const now=new Date(), date=normalizeAttendanceDate_(note&&note.date)||Utilities.formatDate(now,Session.getScriptTimeZone(),'yyyy-MM-dd'), time=normalizeTime_(note&&note.time)||Utilities.formatDate(now,Session.getScriptTimeZone(),'HH:mm:ss');
@@ -1490,7 +1498,7 @@ function employeeSettings_(user){
 function saveEmployeeSettings_(user,settings){
   if(!user || !user.employeeId) return;
   const sh=master_().getSheetByName('EmployeeSettings'); if(!sh) return;
-  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(function(r){return String(r.employeeId)===String(user.employeeId);});
   let day=settings.weekoffDay;
   if(day===''||day===null||day===undefined){
@@ -1593,13 +1601,34 @@ function notifyUsers_(usernames,title,message,type){
   });
 }
 
+function getStoredPhoto_(employeeId){
+  let row=null;
+  try{
+    const sh=master_().getSheetByName('EmployeeSettings');
+    if(sh) row=readRows_(sh).find(function(x){return String(x.employeeId)===String(employeeId);});
+  }catch(e){}
+  if(!row) return {photoUrl:'',photoDataUrl:'',photoFileId:'',photoPath:''};
+  let photoUrl=String(row.photoUrl||'');
+  let photoDataUrl='';
+  const fileId=String(row.photoFileId||'');
+  if(fileId){
+    try{
+      const file=DriveApp.getFileById(fileId);
+      const blob=file.getBlob();
+      const mime=blob.getContentType()||'image/jpeg';
+      photoDataUrl='data:'+mime+';base64,'+Utilities.base64Encode(blob.getBytes());
+      if(!photoUrl) photoUrl='https://drive.google.com/uc?export=view&id='+fileId;
+    }catch(e){}
+  }
+  return {photoUrl:photoUrl,photoDataUrl:photoDataUrl,photoFileId:fileId,photoPath:String(row.photoPath||'')};
+}
+
 function employeeProfile_(s,username){
   assertAdmin_(s);
   const u=findUser_(username); if(!u) throw new Error('Employee not found.');
   const st=employeeSettings_(u);
-  let photoUrl='';
-  try{ const r=readRows_(master_().getSheetByName('EmployeeSettings')).find(x=>String(x.employeeId)===String(u.employeeId)); photoUrl=r&&r.photoUrl||''; }catch(e){}
-  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:photoUrl}};
+  const ph=getStoredPhoto_(u.employeeId);
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
 }
 
 function weekDayName_(day){
@@ -1654,9 +1683,8 @@ function isNonWorkingDate_(date,rules){
 function profile_(s){
   const u=findUser_(s.username); if(!u) throw new Error('User not found.');
   const st=employeeSettings_(u);
-  let photoUrl='';
-  try{ const r=readRows_(master_().getSheetByName('EmployeeSettings')).find(x=>String(x.employeeId)===String(u.employeeId)); photoUrl=r&&r.photoUrl||''; }catch(e){}
-  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:photoUrl}};
+  const ph=getStoredPhoto_(u.employeeId);
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
 }
 
 function changePassword_(s,currentPassword,newPassword){
@@ -1679,31 +1707,39 @@ function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
 // second API action that can fail when an older Worker/Apps Script deployment is live.
 function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType){
   assertAdmin_(s);
+  if(!target || !target.employeeId) throw new Error('Employee Id is required for profile photo.');
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
-  const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/); if(!match) throw new Error('Invalid photo data.');
+  const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
+  if(!match) throw new Error('Invalid photo data.');
   const bytes=Utilities.base64Decode(match[2]);
   if(bytes.length>2*1024*1024) throw new Error('Photo 2 MB se chhoti honi chahiye.');
-  let folder;
-  const props=PropertiesService.getScriptProperties();
-  const folderId=props.getProperty('PHOTO_FOLDER_ID');
-  if(folderId){ try{folder=DriveApp.getFolderById(folderId);}catch(e){} }
-  if(!folder){
-    folder=getOrCreateFolderPath_(['Dashboard Working','office-task-report','Employees Photo']);
-    props.setProperty('PHOTO_FOLDER_ID',folder.getId());
-  }
-  const safe=String(fileName||'profile.jpg').replace(/[^a-zA-Z0-9._-]/g,'_');
-  const blob=Utilities.newBlob(bytes,mimeType||match[1],String(target.employeeId)+'_'+safe);
+
+  // Always resolve the exact requested folder path. This avoids a stale or
+  // incorrect PHOTO_FOLDER_ID pointing somewhere else in Drive.
+  const folder=getOrCreateFolderPath_(['Dashboard Working','office-task-report','Employees Photo']);
+  PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID',folder.getId());
+
+  const ext=(String(mimeType||match[1]).toLowerCase().includes('png')?'png':'jpg');
+  const safeName=String(fileName||('profile_'+target.employeeId+'.'+ext)).replace(/[^a-zA-Z0-9._-]/g,'_');
+  const finalName=String(target.employeeId)+'_'+safeName;
+  const blob=Utilities.newBlob(bytes,mimeType||match[1],finalName);
   const file=folder.createFile(blob);
+  try{file.setDescription('Office Task Report employee profile photo | Employee ID: '+target.employeeId);}catch(e){}
   try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){}
-  const url='https://drive.google.com/uc?export=view&id='+file.getId();
+
+  const fileId=file.getId();
+  const url='https://drive.google.com/uc?export=view&id='+fileId;
+  const photoPath='G:\\My Drive\\Dashboard Working\\office-task-report\\Employees Photo';
   const sh=master_().getSheetByName('EmployeeSettings');
-  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','updatedAt']);
   const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(target.employeeId));
-  if(existing) updateByKey_(sh,'employeeId',target.employeeId,{photoUrl:url,updatedAt:new Date()});
-  else appendObject_(sh,{employeeId:target.employeeId,username:target.username,officeCity:target.office||'',officeAddress:target.address||'',officeInTime:target.officeInTime||'',officeOutTime:target.officeOutTime||'',weekoffDay:target.weekoffDay!==undefined?target.weekoffDay:'',photoUrl:url,updatedAt:new Date()});
+  const obj={photoUrl:url,photoFileId:fileId,photoPath:photoPath,updatedAt:new Date()};
+  if(existing) updateByKey_(sh,'employeeId',target.employeeId,obj);
+  else appendObject_(sh,{employeeId:target.employeeId,username:target.username,officeCity:target.office||'',officeAddress:target.address||'',officeInTime:target.officeInTime||'',officeOutTime:target.officeOutTime||'',weekoffDay:target.weekoffDay!==undefined?target.weekoffDay:'',photoUrl:url,photoFileId:fileId,photoPath:photoPath,updatedAt:new Date()});
   audit_(s,'UPDATE','PROFILE_PHOTO',`Profile photo updated for ${target.name} (${target.employeeId}) by ${s.username}`);
   notifyUsers_([target.username],'Profile Photo Updated','Aapki profile photo Admin ne update ki hai.','PROFILE');
-  return {photoUrl:url,employeeId:target.employeeId,username:target.username};
+  const b64='data:'+(mimeType||match[1])+';base64,'+Utilities.base64Encode(bytes);
+  return {photoUrl:url,photoDataUrl:b64,photoFileId:fileId,photoPath:photoPath,employeeId:target.employeeId,username:target.username};
 }
 
 function getEmployeeFile_(u) {
