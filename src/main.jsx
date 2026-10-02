@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard, ClipboardCheck,
-  LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search, Pencil,
+  LogOut, Menu, ShieldCheck, Users, ClipboardList, Search, Pencil,
   UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.54
+// Office Task Report V.56
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -90,7 +90,6 @@ function App() {
           {view === "notifications" && <Notifications session={session} notify={notify} />}
           {view === "requests" && <RequestsCenter session={session} notify={notify} />}
           {view === "profile" && <Profile session={session} notify={notify} />}
-          {view === "settings" && <SettingsPage session={session} notify={notify} />}
         </div>
       </main>
       {toast && <div className={`toast ${toast.type}`}>{toast.type === "success" ? <Check size={17}/> : <AlertCircle size={17}/>} {toast.message}</div>}
@@ -145,11 +144,10 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
     ["notifications", "Notifications", Bell],
     ["requests", "Requests & Advanced", ClipboardCheck],
     ["profile", "My Profile", UserCircle2],
-    ["settings", "Settings", Settings],
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.52</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.56</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -194,6 +192,30 @@ function Dashboard({session,notify}) {
     </div>
     <section className="panel"><PanelTitle title="Upcoming Reminders"/><ReminderList items={data?.reminders || []}/></section>
   </div>
+}
+
+function formatAttendanceDate(v){
+  if(!v) return "-";
+  const s=String(v).trim();
+  let d=null;
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)){ const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); d=new Date(Number(m[1]),Number(m[2])-1,Number(m[3])); }
+  else { const t=new Date(s); if(!Number.isNaN(t.getTime())) d=t; }
+  if(!d || Number.isNaN(d.getTime())) return s;
+  return `${String(d.getDate()).padStart(2,"0")}-${d.toLocaleString("en-IN",{month:"short"})}-${d.getFullYear()}`;
+}
+function formatAttendanceTime(v){
+  if(v===null || v===undefined || v==="") return "-";
+  const s=String(v).trim();
+  let h=null,m=null;
+  let match=s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if(match){ h=Number(match[1]); m=Number(match[2]); }
+  else {
+    match=s.match(/(?:1899-12-30\s+)?(\d{1,2}):(\d{2})(?::\d{2})?/);
+    if(match){ h=Number(match[1]); m=Number(match[2]); }
+  }
+  if(h===null || h>23 || m>59) return s;
+  const ap=h>=12?"PM":"AM"; h=h%12||12;
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} ${ap}`;
 }
 
 function Attendance({session,notify}) {
@@ -300,7 +322,7 @@ function Attendance({session,notify}) {
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
       </section>
-      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status,r.approveStatus||"NOT APPROVE"])}/>}</section>
+      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes,r.status,r.approveStatus||"NOT APPROVE"])}/>}</section>
     </div>
   </div>
 }
