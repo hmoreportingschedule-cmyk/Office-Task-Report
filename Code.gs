@@ -347,7 +347,7 @@ function route_(action,b) {
     case 'login': return login_(b.username,b.password);
     case 'health': return health_();
     case 'dashboard': return dashboard_(b.session);
-    case 'attendance': return attendance_(b.session);
+    case 'attendance': return attendance_(b.session,b.month,b.year);
     case 'importAttendance': return importAttendance_(b.session,b.rows);
     case 'punch': return punch_(b.session,b.type,b.date,b.time);
     case 'tasks': return tasks_(b.session);
@@ -568,7 +568,7 @@ function dashboard_(s) {
   return {kpis:{present:att.filter(r=>r.date===today && r.status==='PRESENT').length,myTasks:myToday.length,completed,pending},trend,activities,reminders};
 }
 
-function attendance_(s) {
+function attendance_(s,month,year) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), rows=readRows_(f.getSheetByName('Attendance'));
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
@@ -585,10 +585,20 @@ function attendance_(s) {
   const office=employeeSettings_(user);
   const rosterToday=getAttendanceRoster_(user,todayStr);
   const rosterYesterday=getAttendanceRoster_(user,yesterdayStr);
-  const normalizedRows=rows.map(function(r){return Object.assign({},r,{date:normalizeAttendanceDate_(r.date)||String(r.date||'')});});
+  const normalizedRows=rows.map(function(r){
+    return Object.assign({},r,{date:normalizeAttendanceDate_(r.date)||String(r.date||'')});
+  });
+  const selectedMonth = month ? Number(month) : Number(Utilities.formatDate(today,Session.getScriptTimeZone(),'MM'));
+  const selectedYear = year ? Number(year) : Number(Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy'));
+  const filteredRows = normalizedRows.filter(function(r){
+    const m=String(r.date||'').match(/^(\d{4})-(\d{2})-/);
+    return m && Number(m[1])===selectedYear && Number(m[2])===selectedMonth;
+  }).sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
   return {
     today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:t.officeMinutes||0,breakMinutes:t.breakMinutes||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
-    rows:normalizedRows.slice(-30).reverse(),
+    rows:filteredRows.slice().reverse(),
+    selectedMonth:selectedMonth,
+    selectedYear:selectedYear,
     editableDates:editableDates,
     settings:{officeInTime:(rosterToday&&rosterToday.officeInTime)||office.officeInTime||'',officeOutTime:(rosterToday&&rosterToday.officeOutTime)||office.officeOutTime||'',weekoffLabel:weekDayName_(rules.weekoff),roster:{today:rosterToday||null,yesterday:rosterYesterday||null}}
   };
@@ -714,7 +724,7 @@ function normalizeAttendanceImportRow_(raw) {
     out: normalizeAttendanceTime_(pick(['out','OUT','outTime','OUT Time','Out Time'])),
     officeMinutes: normalizeNumber_(pick(['officeMinutes','Office Minutes','office time','Office Time'])),
     breakMinutes: normalizeNumber_(pick(['breakMinutes','Break Minutes','break time','Break Time'])),
-    status: String(pick(['status','Status']) || '').trim(),
+    status: normalizeAttendanceStatus_(pick(['status','Status'])),
     approveStatus: normalizeApprovalStatus_(pick(['approveStatus','Approve/Not Approve','Approve','Approval Status','approvalStatus']))
   };
 }
@@ -737,9 +747,20 @@ function normalizeAttendanceTime_(v) {
   return '';
 }
 
+function normalizeAttendanceStatus_(v){
+  const s=String(v||'').trim().toUpperCase();
+  if(!s) return '';
+  if(s==='PRESENT') return 'Present';
+  if(s==='HOLIDAY') return 'Holiday';
+  if(s==='WEEKLY OFF' || s==='WEEKOFF' || s==='WEEK OFF') return 'Weekly Off';
+  if(s==='LEAVE') return 'Leave';
+  if(s==='ABSENT') return 'Absent';
+  return String(v).trim().replace(/\b\w/g,function(c){return c.toUpperCase()});
+}
+
 function normalizeApprovalStatus_(v){
   const s=String(v||'').trim().toUpperCase();
-  return ['APPROVE','APPROVED','YES','Y','OK','TRUE','1'].includes(s) ? 'APPROVE' : 'NOT APPROVE';
+  return ['APPROVE','APPROVED','APPROVAL','YES','Y','OK','TRUE','1'].includes(s) ? 'Approve' : 'Not Approve';
 }
 
 function normalizeAttendanceDate_(v) {
