@@ -61,7 +61,7 @@ export default {
       return json({
         ok:true,
         app:"Office Task Report",
-        worker:"V.37",
+        worker:"V.38",
         proxy:true,
         appsScript:APPS_SCRIPT_URL
       }, 200, request);

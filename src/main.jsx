@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bell, CalendarDays, CheckCircle2, Clock3, FileText, LayoutDashboard, ClipboardCheck,
-  LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search,
+  LogOut, Menu, Settings, ShieldCheck, Users, ClipboardList, Search, Pencil,
   UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.30
+// Office Task Report V.38
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -146,7 +146,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.20</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.38</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -195,15 +195,44 @@ function Dashboard({session,notify}) {
 function Attendance({session,notify}) {
   const [data,setData]=useState(null); const [busy,setBusy]=useState(false);
   const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null);
+  const [attendanceDate,setAttendanceDate]=useState("");
+  const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
   const fileRef=React.useRef(null);
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
-  const load=async()=>{setBusy(true);try{setData(await api("attendance",{session}))}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const load=async()=>{
+    setBusy(true);
+    try{
+      const r=await api("attendance",{session});
+      setData(r);
+      setAttendanceDate(r.editableDates?.[0]?.date || "");
+      const selected=(r.rows||[]).find(x=>x.date=== (r.editableDates?.[0]?.date || ""));
+      setInTime((selected?.in||"").slice(0,5));
+      setOutTime((selected?.out||"").slice(0,5));
+    }catch(e){notify("error",e.message)}finally{setBusy(false)}
+  };
   useEffect(()=>{load()},[]);
-  const punch=async(type)=>{try{await api("punch",{session,type});notify("success",`${type} time recorded.`);load()}catch(e){notify("error",e.message)}};
+
+  const selectDate=(date)=>{
+    setAttendanceDate(date);
+    const row=(data?.rows||[]).find(x=>x.date===date);
+    setInTime((row?.in||"").slice(0,5));
+    setOutTime((row?.out||"").slice(0,5));
+  };
+
+  const saveManualAttendance=async()=>{
+    if(!attendanceDate){notify("error","Attendance date select karein.");return;}
+    if(!inTime && !outTime){notify("error","IN Time ya OUT Time enter karein.");return;}
+    try{
+      if(inTime) await api("punch",{session,type:"IN",date:attendanceDate,time:inTime});
+      if(outTime) await api("punch",{session,type:"OUT",date:attendanceDate,time:outTime});
+      notify("success","Attendance time save ho gaya.");
+      await load();
+    }catch(e){notify("error",e.message)}
+  };
 
   const downloadFormat=(type)=>{
     const headers=["employeeId","date","in","out","officeMinutes","breakMinutes","status"];
-    const sample=[["12345","2026-10-01","09:30:00","18:00:00","510","30","PRESENT"]];
+    const sample=[[session.code||"12345",attendanceDate||new Date().toISOString().slice(0,10),"09:30:00","18:00:00","510","30","PRESENT"]];
     if(type==="csv"){
       const csv=[headers.join(","),...sample.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(","))].join("\n");
       const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const a=document.createElement("a");
@@ -217,30 +246,24 @@ function Attendance({session,notify}) {
     const file=e.target.files?.[0]; if(!file)return;
     setImportResult(null); setImportBusy(true);
     try{
-      const buf=await file.arrayBuffer();
-      const wb=XLSX.read(buf,{type:"array",cellDates:true});
-      const sheet=wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
+      const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:"array",cellDates:true});
+      const sheet=wb.Sheets[wb.SheetNames[0]]; const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
       if(!rows.length)throw new Error("Excel/CSV file mein koi record nahi mila.");
-      const result=await api("importAttendance",{session,rows});
-      setImportResult(result);
-      notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete.`);
-      await load();
+      const result=await api("importAttendance",{session,rows}); setImportResult(result);
+      notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete.`); await load();
     }catch(err){notify("error",err.message);setImportResult({errors:[err.message]});}
-    finally{
-      setImportBusy(false);
-      if(fileRef.current) fileRef.current.value="";
-    }
+    finally{setImportBusy(false);if(fileRef.current)fileRef.current.value="";}
   };
 
+  const selectedRule=data?.editableDates?.find(x=>x.date===attendanceDate);
   return <div>
-    <PageHead title="Attendance" subtitle="Track IN, OUT, breaks and office time."
+    <PageHead title="Attendance" subtitle="IN / OUT time manually add karein. Sirf Today aur Previous 1 Day allowed hai."
       action={<div className="top-actions-inline"><button className="secondary" onClick={load}><RefreshCw size={16}/> Refresh</button></div>}/>
 
     {isAdmin && <section className="panel attendance-import-panel">
       <PanelTitle title="Employee Attendance Import" action={<span className="muted">Excel / CSV</span>}/>
       <div className="import-toolbar">
-        <div className="import-help"><FileSpreadsheet size={20}/><div><b>Bulk Attendance Import</b><small>Existing attendance will not be overwritten. Only missing/pending fields are added.</small></div></div>
+        <div className="import-help"><FileSpreadsheet size={20}/><div><b>Bulk Attendance Import</b><small>Existing attendance overwrite nahi hogi. Sirf blank/pending fields fill honge.</small></div></div>
         <div className="import-actions">
           <button className="secondary" type="button" onClick={()=>downloadFormat("xlsx")}><Download size={15}/> Excel Format</button>
           <button className="secondary" type="button" onClick={()=>downloadFormat("csv")}><Download size={15}/> CSV Format</button>
@@ -251,12 +274,26 @@ function Attendance({session,notify}) {
       {importResult?.errors?.length>0 && <div className="import-errors">{importResult.errors.slice(0,8).map((x,i)=><div key={i}>{x}</div>)}</div>}
     </section>}
 
-    <div className="attendance-hero panel">
-      <div><span className="status-dot"/> Today</div>
-      <div className="big-time">{data?.today?.in || "--:--"} <span>→</span> {data?.today?.out || "--:--"}</div>
-      <div className="muted">Office Time: <b>{data?.today?.officeMinutes || 0} min</b> · Break: <b>{data?.today?.breakMinutes || 0} min</b></div>{data?.today?.nonWorking && <div className="assign-note">Today is {data?.today?.reason || "Weekoff"}. Attendance is not required.</div>}
-      <div className="action-row"><button className="primary" onClick={()=>punch("IN")} disabled={!!data?.today?.in || data?.today?.nonWorking}>IN Time</button><button className="secondary" onClick={()=>punch("OUT")} disabled={!data?.today?.in || !!data?.today?.out || data?.today?.nonWorking}>OUT Time</button></div>
-    </div>
+    <section className="panel manual-attendance-panel">
+      <PanelTitle title="Manual Attendance" action={<span className="muted">No future date</span>}/>
+      <div className="form-grid compact-form">
+        <label>Attendance Date
+          <select value={attendanceDate} onChange={e=>selectDate(e.target.value)} disabled={busy}>
+            {(data?.editableDates||[]).map(x=><option key={x.date} value={x.date}>{x.label}</option>)}
+          </select>
+        </label>
+        <label>IN Time
+          <input type="time" value={inTime} onChange={e=>setInTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
+        </label>
+        <label>OUT Time
+          <input type="time" value={outTime} onChange={e=>setOutTime(e.target.value)} disabled={!!selectedRule?.nonWorking}/>
+        </label>
+        <div className="assign-note full-span"><Clock3 size={15}/> Office Time: <b>{data?.settings?.officeInTime||"--:--"}</b> to <b>{data?.settings?.officeOutTime||"--:--"}</b> · Weekoff: <b>{data?.settings?.weekoffLabel||"Default"}</b></div>
+        {selectedRule?.nonWorking && <div className="assign-note full-span">{selectedRule.reason || "Leave / Weekoff / Weekoff Adjustment"}. Attendance select karne ki zarurat nahi hai.</div>}
+        <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
+      </div>
+    </section>
+
     <section className="panel"><PanelTitle title="Recent Attendance"/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","IN","OUT","Office Minutes","Status"]} rows={(data?.rows||[]).map(r=>[r.date,r.in,r.out,r.officeMinutes,r.status])}/>}</section>
   </div>
 }
@@ -403,42 +440,54 @@ function Templates({session,notify}) {
 }
 
 function Employees({session,notify}) {
-  const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",country:"",region:"",state:"",division:"",district:""};
+  const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",officeInTime:"",officeOutTime:"",weekoffDay:"",country:"",region:"",state:"",division:"",district:""};
   const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false);
+  const weekDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const load=async()=>{try{const r=await api("employees",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
   useEffect(()=>{load()},[]);
-  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
+  const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
   const reset=()=>{setForm(empty);setEditing(false)};
   const save=async(e)=>{e.preventDefault();setBusy(true);try{if(editing){await api("updateEmployee",{session,employee:form});notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:form});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
   return <div>
-    <PageHead title="User Create" subtitle="Master Admin can create, edit and delete users. Changes sync to the Master Users sheet." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
+    <PageHead title="User Create" subtitle="Employee Id ke saath office timing aur weekoff bhi Admin set/edit kar sakta hai." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>
     <div className="two-col user-create-layout">
       <form className="panel form-grid" onSubmit={save}>
         <PanelTitle title={editing ? "Edit User" : "User Create"} action={editing && <button type="button" className="secondary" onClick={reset}>Cancel</button>}/>
         <label>Employee Name<input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></label>
         <label>Employee Id<input value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required disabled={editing}/></label>
         <label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} required disabled={editing} autoComplete="username"/></label>
-        <label>{editing ? "New Password (Optional)" : "Password"}<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete={editing ? "new-password" : "new-password"} required={!editing} minLength={4} placeholder={editing ? "Leave blank to keep current password" : "Enter login password"}/></label>
+        <label>{editing ? "New Password (Optional)" : "Password"}<input value={form.password} onChange={e=>setForm({...form,password:e.target.value})} type="password" autoComplete="new-password" required={!editing} minLength={4} placeholder={editing ? "Leave blank to keep current password" : "Enter login password"}/></label>
         <label>Department<input value={form.department} onChange={e=>setForm({...form,department:e.target.value})}/></label>
         <label>Designation<input value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})}/></label>
         <label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option>EMPLOYEE</option><option>HOD</option><option>ADMIN</option></select></label>
         <label>Contact<input value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></label>
         <label>WhatsApp<input value={form.whatsapp} onChange={e=>setForm({...form,whatsapp:e.target.value})}/></label>
-        <label>Office Location<input value={form.office} onChange={e=>setForm({...form,office:e.target.value})}/></label>
-        <label>Office Address<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></label>
+        <div className="location-heading full-span">Office Settings</div>
+        <label>Office City<input value={form.office} onChange={e=>setForm({...form,office:e.target.value})} placeholder="Office City"/></label>
+        <label>Office Address<input value={form.address} onChange={e=>setForm({...form,address:e.target.value})} placeholder="Office Address"/></label>
+        <label>Office In Time<input type="time" value={form.officeInTime} onChange={e=>setForm({...form,officeInTime:e.target.value})}/></label>
+        <label>Office Out Time<input type="time" value={form.officeOutTime} onChange={e=>setForm({...form,officeOutTime:e.target.value})}/></label>
+        <label>Weekoff
+          <select value={form.weekoffDay} onChange={e=>setForm({...form,weekoffDay:e.target.value})}>
+            <option value="">Default System Weekoff</option>
+            {weekDays.map((x,i)=><option key={i} value={i}>{x}</option>)}
+          </select>
+        </label>
+        <div className="assign-note full-span">Leave aur approved Weekoff Adjustment attendance mein automatically non-working maana jayega. Employee ko manually select nahi karna hoga.</div>
         <div className="location-heading full-span">Employee Location / Reporting Area</div>
         <label>Country<input value={form.country} onChange={e=>setForm({...form,country:e.target.value})} placeholder="Country"/></label>
         <label>Region<input value={form.region} onChange={e=>setForm({...form,region:e.target.value})} placeholder="Region"/></label>
         <label>State<input value={form.state} onChange={e=>setForm({...form,state:e.target.value})} placeholder="State"/></label>
         <label>Division<input value={form.division} onChange={e=>setForm({...form,division:e.target.value})} placeholder="Division"/></label>
         <label>District<input value={form.district} onChange={e=>setForm({...form,district:e.target.value})} placeholder="District"/></label>
-        <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> User Create</> : <><Plus size={16}/> User Create</>}</button>
+        <button className="primary full-span" disabled={busy}>{editing ? <><CheckCircle2 size={16}/> Update User</> : <><Plus size={16}/> User Create</>}</button>
       </form>
-      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Country</th><th>Region</th><th>State</th><th>Division</th><th>District</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.country}</td><td>{r.region}</td><td>{r.state}</td><td>{r.division}</td><td>{r.district}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit" onClick={()=>edit(r)}><Settings size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
+      <section className="panel user-list-panel"><PanelTitle title="All Users" action={<button className="secondary" onClick={load}><RefreshCw size={15}/> Refresh</button>}/><div className="table-wrap"><table><thead><tr><th>Name</th><th>Employee Id</th><th>Username</th><th>Office City</th><th>Office In</th><th>Office Out</th><th>Weekoff</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.code}</td><td>{r.username}</td><td>{r.office}</td><td>{r.officeInTime||"-"}</td><td>{r.officeOutTime||"-"}</td><td>{r.weekoffLabel||"Default"}</td><td>{r.role}</td><td><span className="status">{r.status}</span></td><td><div className="table-actions"><button className="approve" title="Edit User" onClick={()=>edit(r)}><Pencil size={14}/></button><button className="reject" title="Delete" onClick={()=>remove(r)} disabled={r.username==="admin"}><X size={14}/></button></div></td></tr>)}</tbody></table></div></section>
     </div>
   </div>
 }
+
 function Approvals({session,notify}) {
   const [rows,setRows]=useState([]);
   const load=async()=>{try{const r=await api("approvals",{session});setRows(r.rows||[])}catch(e){notify("error",e.message)}};
@@ -508,7 +557,7 @@ function RequestsCenter({session,notify}) {
   </div>
 }
 
-function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.20</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
+function SettingsPage(){return <div><PageHead title="Settings" subtitle="System preferences and configuration."/><section className="panel"><div className="setting-row"><div><b>System Architecture</b><p>Vercel frontend + Google Apps Script + Google Drive yearly employee files.</p></div><span className="tag">V.38</span></div><div className="setting-row"><div><b>Employee File Rule</b><p>One Google Sheet per employee per year: Name_EmployeeId_Year</p></div><span className="tag">Jan–Dec</span></div></section></div>}
 
 function PageHead({title,subtitle,action}){return <div className="page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
 function PanelTitle({title,action}){return <div className="panel-title"><h3>{title}</h3>{action}</div>}
