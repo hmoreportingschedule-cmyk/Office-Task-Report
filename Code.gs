@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.86
+ * OFFICE TASK REPORT V.87
  * Google Apps Script backend
  *
  * Architecture:
@@ -26,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.86',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.87',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.86',
+      version:'V.87',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.86',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.87',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -395,6 +395,8 @@ function route_(action,b) {
     case 'assignTask': return assignTask_(b.session,b.task);
     case 'taskProgress': return taskProgress_(b.session,b.taskId,b.progress,b.note,b.year);
     case 'taskTime': return taskTime_(b.session,b.taskId,b.type,b.minutes,b.year);
+    case 'adminTaskUpdate': return adminTaskUpdate_(b.session,b.employeeUsername,b.taskId,b.task);
+    case 'adminTaskDelete': return adminTaskDelete_(b.session,b.employeeUsername,b.taskId,b.year);
     case 'templates': return templates_(b.session);
     case 'createTemplate': return createTemplate_(b.session,b.template);
     case 'updateTemplate': return updateTemplate_(b.session,b.template);
@@ -1120,27 +1122,38 @@ function markSync_(username,module){
 }
 
 function tasks_(s,month,year,since) {
-  const user=findUser_(s.username);
   const m=month?Number(month):0, y=year?Number(year):0;
-  const file=getEmployeeFile_(user, y || new Date().getFullYear());
-  const taskSheet=file.getSheetByName('Tasks');
-  migrateTaskAssignmentsV74_(taskSheet);
-  const version=PropertiesService.getScriptProperties().getProperty('OTR_SYNCVER_TASKS_'+String(user.username))||'';
-  const cacheKey='OTR_TASK_ROWS_'+String(user.username)+'_'+String(y||0)+'_'+String(m||0)+'_'+version.replace(/[^A-Za-z0-9]/g,'').slice(-20);
-  let filtered=null;
-  try{const hit=CacheService.getScriptCache().get(cacheKey);if(hit) filtered=JSON.parse(hit);}catch(e){}
-  if(!Array.isArray(filtered)){
+  const isManager=['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role||''));
+  const users=isManager ? readUsersCached_().filter(u=>String(u.status||'ACTIVE').toUpperCase()==='ACTIVE' && ['EMPLOYEE','HOD'].includes(String(u.role||''))) : [findUser_(s.username)];
+  const all=[];
+  users.forEach(function(user){
+    if(!user) return;
+    const file=isManager ? getExistingEmployeeFile_(user, y || new Date().getFullYear()) : getEmployeeFile_(user, y || new Date().getFullYear());
+    if(!file) return;
+    const taskSheet=file.getSheetByName('Tasks');
+    migrateTaskAssignmentsV74_(taskSheet);
     const rows=readRows_(taskSheet);
-    filtered=(m&&y)?rows.filter(r=>taskOverlapsMonth_(r,m,y)):rows;
-    try{CacheService.getScriptCache().put(cacheKey,JSON.stringify(filtered),20);}catch(e){}
-  }
+    rows.forEach(function(r){
+      if(m&&y&&!taskOverlapsMonth_(r,m,y)) return;
+      r.employeeUsername=user.username;
+      r.employeeName=user.name;
+      r.employeeId=user.employeeCode;
+      all.push(r);
+    });
+  });
+  let filtered=all;
   const cursor=syncCursorFromRows_(filtered);
-  let out=filtered;
+  const deleteKey='OTR_TASK_DELETES_'+String(s.username||'')+'_'+String(y||new Date().getFullYear());
+  let deletedIds=[];
+  try{deletedIds=JSON.parse(PropertiesService.getScriptProperties().getProperty(deleteKey)||'[]');if(!Array.isArray(deletedIds))deletedIds=[];}catch(e){deletedIds=[];}
   if(since){
     const sd=new Date(String(since));
-    if(!isNaN(sd.getTime())) out=filtered.filter(r=>{const u=new Date(String(r.updatedAt||''));return !isNaN(u.getTime())&&u.getTime()>sd.getTime();});
+    if(!isNaN(sd.getTime())) filtered=filtered.filter(function(r){
+      const u=new Date(String(r.updatedAt||''));
+      return !isNaN(u.getTime()) && u.getTime()>sd.getTime();
+    });
   }
-  return {rows:out.slice().reverse(),incremental:!!since,month:m||null,year:y||null,syncAt:cursor,syncCursor:cursor,serverTime:new Date().toISOString()};
+  return {rows:filtered.slice().sort(function(a,b){return String(b.updatedAt||b.date||'').localeCompare(String(a.updatedAt||a.date||''));}),incremental:!!since,month:m||null,year:y||null,syncAt:cursor,syncCursor:cursor,deletedIds:deletedIds,serverTime:new Date().toISOString()};
 }
 
 function taskAction_(s,id,type,progress,note,minutes,requestedYear) {
@@ -1202,6 +1215,87 @@ function assignTask_(s,t) {
   markSync_(user.username,'TASKS');
   audit_(s,'ASSIGN','TASK',`${t.name} → ${user.name}`);
   return {taskId,syncCursor:new Date().toISOString()};
+}
+
+function assertTaskAdmin_(s){
+  if(!['MASTER_ADMIN','ADMIN'].includes(String(s.role||''))) throw new Error('Sirf Master Admin/Admin assigned task edit ya delete kar sakte hain.');
+}
+
+function taskFieldRules_(){
+  return {
+    names:['Followup','File Work','Outdoor','Meeting','Other'],
+    categories:{
+      'Followup':['Monthly Report','Hind Mushawarat Task','HOD-Department Points Task','Data Required','Other'],
+      'File Work':['Analise','Errors Cheking','Application Required Data','Other'],
+      'Outdoor':['Office Related','Journey','Tarbiyati Ijtima','Other'],
+      'Meeting':['Online Meeting','Physicall Meeting','Other'],
+      'Other':['Other']
+    },
+    priorities:['Low','Normal','High','Urgent']
+  };
+}
+
+function validateTaskPatch_(t){
+  const rules=taskFieldRules_();
+  const name=String(t.name||'').trim(), category=String(t.category||'').trim(), priority=String(t.priority||'Normal').trim();
+  if(!rules.names.includes(name)) throw new Error('Invalid Task Name.');
+  if(!(rules.categories[name]||[]).includes(category)) throw new Error('Invalid Category for selected Task Name.');
+  if(!rules.priorities.includes(priority)) throw new Error('Invalid task priority.');
+}
+
+function adminTaskUpdate_(s,employeeUsername,taskId,t){
+  assertTaskAdmin_(s);
+  if(!employeeUsername || !taskId || !t) throw new Error('Employee aur Task details required hain.');
+  const user=findUser_(employeeUsername);
+  if(!user || !['EMPLOYEE','HOD'].includes(String(user.role||''))) throw new Error('Employee/HOD task owner not found.');
+  const requestedYear=Number(t.year);
+  if(!Number.isInteger(requestedYear)||requestedYear<2020||requestedYear>2100) throw new Error('Valid task year required.');
+  const file=getEmployeeFile_(user,requestedYear), sh=file.getSheetByName('Tasks');
+  const rows=readRows_(sh), row=rows.find(function(r){return String(r.id)===String(taskId);});
+  if(!row) throw new Error('Task not found.');
+  validateTaskPatch_(t);
+  const currentYear=Number(row.assignmentYear)||requestedYear, currentMonth=Number(row.assignmentMonth)||Number(String(row.date||'').slice(5,7));
+  const from=Number(t.fromDay!==undefined?t.fromDay:row.assignmentFrom||String(row.date||'').slice(8,10));
+  const to=Number(t.toDay!==undefined?t.toDay:row.assignmentTo||String(row.due||row.date||'').slice(8,10));
+  const month=Number(t.month!==undefined?t.month:currentMonth), year=Number(t.year!==undefined?t.year:currentYear);
+  if(year!==currentYear || month!==currentMonth) throw new Error('Task edit mein Month/Year change nahi kiya ja sakta. Naya period ho to task ko re-assign karein.');
+  const daysInMonth=new Date(year,month,0).getDate();
+  if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from||to>daysInMonth) throw new Error('Valid From Day / To Day select karein.');
+  const startDate=year+'-'+String(month).padStart(2,'0')+'-'+String(from).padStart(2,'0');
+  const endDate=year+'-'+String(month).padStart(2,'0')+'-'+String(to).padStart(2,'0');
+  updateByKey_(sh,'id',taskId,{date:startDate,name:String(t.name).trim(),details:String(t.details||'').trim(),category:String(t.category).trim(),priority:String(t.priority).trim(),due:endDate,assignmentMonth:month,assignmentYear:year,assignmentFrom:from,assignmentTo:to,assignmentKey:[String(row.assignmentKey||taskId).split('|')[0],user.username,year,month,from,to].join('|'),updatedAt:new Date()});
+  appendActivity_(file,user,'Task Edited',`${t.name} · ${startDate} to ${endDate}`);
+  notifyUsers_([user.username],'Task Updated',`${t.name} task Admin ne update ki hai. Period: ${startDate} to ${endDate}.`,'TASK');
+  markSync_(user.username,'TASKS');
+  audit_(s,'UPDATE','TASK',`Edited ${t.name} → ${user.name}`);
+  return {updated:true,employeeUsername:user.username,taskId:taskId};
+}
+
+function adminTaskDelete_(s,employeeUsername,taskId,requestedYear){
+  assertTaskAdmin_(s);
+  if(!employeeUsername || !taskId) throw new Error('Employee aur Task ID required hain.');
+  const user=findUser_(employeeUsername);
+  if(!user || !['EMPLOYEE','HOD'].includes(String(user.role||''))) throw new Error('Employee/HOD task owner not found.');
+  const year=Number(requestedYear);
+  if(!Number.isInteger(year)||year<2020||year>2100) throw new Error('Valid task year required.');
+  const file=getEmployeeFile_(user,year), sh=file.getSheetByName('Tasks'), data=sh.getDataRange().getValues();
+  if(data.length<2) throw new Error('Task not found.');
+  const headers=data[0].map(String), idIndex=headers.indexOf('id');
+  if(idIndex<0) throw new Error('Task ID column not found.');
+  let rowIndex=-1, taskName='Task';
+  for(let i=1;i<data.length;i++) if(String(data[i][idIndex])===String(taskId)){rowIndex=i+1;const nameIndex=headers.indexOf('name');if(nameIndex>=0)taskName=String(data[i][nameIndex]||'Task');break;}
+  if(rowIndex<0) throw new Error('Task not found.');
+  sh.deleteRow(rowIndex);
+  const deleteKey='OTR_TASK_DELETES_'+String(user.username)+'_'+String(year);
+  let deletedIds=[];
+  try{deletedIds=JSON.parse(PropertiesService.getScriptProperties().getProperty(deleteKey)||'[]');if(!Array.isArray(deletedIds))deletedIds=[];}catch(e){deletedIds=[];}
+  deletedIds=[String(taskId)].concat(deletedIds.filter(function(x){return String(x)!==String(taskId);})).slice(0,100);
+  PropertiesService.getScriptProperties().setProperty(deleteKey,JSON.stringify(deletedIds));
+  appendActivity_(file,user,'Task Deleted',taskName);
+  notifyUsers_([user.username],'Task Deleted',`${taskName} task Admin ne delete kar di hai.`,'TASK');
+  markSync_(user.username,'TASKS');
+  audit_(s,'DELETE','TASK',`Deleted ${taskName} → ${user.name}`);
+  return {deleted:true,employeeUsername:user.username,taskId:taskId};
 }
 
 function taskProgress_(s,id,progress,note,requestedYear) {
@@ -1360,7 +1454,7 @@ function assignTemplate_(s,templateId,username,month,year,fromDay,toDay) {
   const daysInMonth=new Date(y,m,0).getDate();
   if(from<1||to<1||from>to||from>daysInMonth) throw new Error(`Task period ${y}-${String(m).padStart(2,'0')} ke andar valid hona chahiye.`);
   const safeTo=Math.min(to,daysInMonth);
-  const file=getEmployeeFile_(user), sh=file.getSheetByName('Tasks');
+  const file=getEmployeeFile_(user,y), sh=file.getSheetByName('Tasks');
   ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const key=[templateId,username,y,m,from,safeTo].join('|');
   const existing=readRows_(sh).some(r=>String(r.assignmentKey||'')===key);
@@ -2037,6 +2131,23 @@ function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,allowSel
   notifyUsers_([target.username],'Profile Photo Updated','Aapki profile photo Admin ne update ki hai.','PROFILE');
   const b64='data:'+(mimeType||match[1])+';base64,'+Utilities.base64Encode(bytes);
   return {photoUrl:url,photoDataUrl:b64,photoFileId:fileId,photoPath:photoPath,employeeId:target.employeeId,username:target.username};
+}
+
+function getExistingEmployeeFile_(u, requestedYear){
+  if(!u || !u.employeeCode) return null;
+  const parsedYear=Number(requestedYear);
+  const year=Number.isInteger(parsedYear)&&parsedYear>=2020&&parsedYear<=2100?parsedYear:new Date().getFullYear();
+  const props=PropertiesService.getScriptProperties();
+  let folder=null;
+  const folderId=props.getProperty('EMPLOYEE_FOLDER_ID');
+  if(folderId){try{folder=DriveApp.getFolderById(folderId);}catch(e){}}
+  if(!folder){folder=getOrCreateFolderPath_(['Dashboard Working','office-task-report','Employees Task Files']);props.setProperty('EMPLOYEE_FOLDER_ID',folder.getId());}
+  const targetName=`${u.name}_${u.employeeCode}_${year}`;
+  const files=folder.getFilesByName(targetName);
+  if(!files.hasNext()) return null;
+  const ss=SpreadsheetApp.open(files.next());
+  if(props.getProperty('OTR_EMP_SCHEMA_'+ss.getId())!==EMPLOYEE_SHEETS_SCHEMA_VERSION) setupEmployeeSheets_(ss,u);
+  return ss;
 }
 
 function getEmployeeFile_(u, requestedYear) {
