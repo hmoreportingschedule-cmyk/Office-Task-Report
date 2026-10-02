@@ -19,21 +19,51 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const payload = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const payload = typeof req.body === "string"
+      ? JSON.parse(req.body || "{}")
+      : (req.body || {});
+    const body = JSON.stringify(payload);
 
-    const upstream = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
-      redirect: "follow",
-    });
+    // Apps Script Web Apps commonly return a 302 redirect from the
+    // script.google.com URL to a script.googleusercontent.com URL.
+    // IMPORTANT: using fetch(..., redirect:"follow") can turn the redirected
+    // POST into a GET, which means the Apps Script doPost() never receives the
+    // login request. We therefore follow redirects manually and resend the
+    // SAME POST body at every redirect target.
+    let target = APPS_SCRIPT_URL;
+    let upstream;
+
+    for (let i = 0; i < 5; i++) {
+      upstream = await fetch(target, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body,
+        redirect: "manual",
+      });
+
+      const location = upstream.headers.get("location");
+      if (![301, 302, 303, 307, 308].includes(upstream.status) || !location) {
+        break;
+      }
+
+      target = new URL(location, target).toString();
+    }
 
     const text = await upstream.text();
     res.setHeader("Cache-Control", "no-store, max-age=0");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
 
-    // Apps Script should return JSON. Preserve its exact response so the
-    // frontend receives the real backend error instead of a generic proxy error.
+    // If Apps Script still returned a redirect after the safety limit, return
+    // a useful diagnostic instead of leaving the browser waiting.
+    if ([301, 302, 303, 307, 308].includes(upstream.status)) {
+      return res.status(502).json({
+        ok: false,
+        message: "Apps Script redirect chain could not be completed.",
+        status: upstream.status,
+        location: upstream.headers.get("location") || ""
+      });
+    }
+
     return res.status(upstream.status).send(text);
   } catch (error) {
     return res.status(502).json({
