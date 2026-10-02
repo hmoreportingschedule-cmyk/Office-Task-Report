@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.62',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.65',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.62',
+      version:'V.65',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.62',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.65',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -372,6 +372,8 @@ function route_(action,b) {
     case 'approvals': return approvals_(b.session);
     case 'approvalAction': return approvalAction_(b.session,b.id,b.status);
     case 'reports': return reports_(b.session,b.range);
+    case 'advancedReports': return advancedReports_(b.session,b.range);
+    case 'previewAttendanceImport': return previewAttendanceImport_(b.session,b.rows);
     case 'exportReport': return exportReport_(b.session,b.format,b.range);
     case 'notifications': return notifications_(b.session);
     case 'markNotificationsRead': return markNotificationsRead_(b.session);
@@ -576,7 +578,7 @@ function dashboard_(s) {
 
 function attendance_(s,month,year,since) {
   const user=findUser_(s.username), f=getEmployeeFile_(user), attSh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const rows=readRows_(attSh);
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const yesterday=new Date(today); yesterday.setDate(yesterday.getDate()-1);
@@ -609,19 +611,10 @@ function attendance_(s,month,year,since) {
       const namaz=String(r[`break${i}NamazType`]||'').trim();
       const startT=normalizeTime_(r[`break${i}Start`]), endT=normalizeTime_(r[`break${i}End`]);
       if(!startT||!endT) continue;
-      let max=0, label=type;
-      if(type==='Lunch'){max=25; label='Lunch Time';}
-      else if(type==='Namaz' && namaz==='Asr'){max=25; label='Namaz - Asr';}
-      else if(type==='Namaz' && namaz==='Magrib'){max=25; label='Namaz - Magrib';}
-      else if(type==='Namaz' && namaz==='Zohar'){max=20; label='Namaz - Zohar';}
-      else if(type==='Namaz' && namaz==='Juma'){max=60; label='Namaz - Juma';}
-      else if(type==='Namaz' && namaz==='Zohar / Juma'){
-        const dow=new Date(r.date+'T00:00:00').getDay();
-        max=dow===5?60:20; label=dow===5?'Namaz - Juma':'Namaz - Zohar';
-      }
+      const rule=breakRule_(type,namaz), max=rule.max, label=rule.label;
       if(max>0){
         const actual=minutesBetween_(startT,endT);
-        if(actual>max) breakAlerts.push({date:r.date,breakNo:i,type:label,allowedMinutes:max,actualMinutes:actual,excessMinutes:actual-max});
+        if(actual>max) breakAlerts.push({date:r.date,breakNo:i,type:label,allowedMinutes:max,actualMinutes:actual,excessMinutes:actual-max,window:rule.range});
       }
     }
   });
@@ -630,8 +623,9 @@ function attendance_(s,month,year,since) {
   const break3Frozen=String((sysRows.find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE';
   return {
     break3Frozen:break3Frozen,
-    today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:t.officeMinutes||0,breakMinutes:t.breakMinutes||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
+    today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:calculateDutyMinutes_(t.in,t.out,t)||t.officeMinutes||0,breakMinutes:t.breakMinutes||calculateBreakMinutesFromRow_(t)||0,extraBreakMinutes:t.extraBreakMinutes||calculateExtraBreakMinutesFromRow_(t)||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
     rows:(function(){
+      filteredRows.forEach(function(r){ r.officeMinutes=calculateDutyMinutes_(r.in,r.out,r); r.breakMinutes=r.breakMinutes===''?calculateBreakMinutesFromRow_(r):Number(r.breakMinutes||0); r.extraBreakMinutes=r.extraBreakMinutes===''?calculateExtraBreakMinutesFromRow_(r):Number(r.extraBreakMinutes||0); });
       if(!since) return filteredRows.slice().reverse();
       const sinceDate=new Date(String(since));
       if(isNaN(sinceDate.getTime())) return filteredRows.slice().reverse();
@@ -690,7 +684,7 @@ function importAttendance_(s, inputRows) {
       const group = groups[code], user = group.user;
       const file = getEmployeeFile_(user);
       const sh = file.getSheetByName('Attendance');
-      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+      ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
       const range = sh.getDataRange();
       const values = range.getValues();
       const headers = values.shift().map(String);
@@ -709,8 +703,9 @@ function importAttendance_(s, inputRows) {
           row[idx.date] = r.date;
           if (idx.in !== undefined) row[idx.in] = r.in || '';
           if (idx.out !== undefined) row[idx.out] = r.out || '';
-          if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = r.officeMinutes === '' ? calculateOfficeMinutes_(r.in,r.out) : Number(r.officeMinutes || 0);
+          if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = (r.in && r.out) ? calculateDutyMinutes_(r.in,r.out,r) : (r.officeMinutes === '' ? calculateOfficeMinutes_(r.in,r.out) : Number(r.officeMinutes || 0));
           if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? calculateBreakMinutesFromRow_(r) : Number(r.breakMinutes || 0);
+          if (idx.extraBreakMinutes !== undefined) row[idx.extraBreakMinutes] = r.extraBreakMinutes === '' ? calculateExtraBreakMinutesFromRow_(r) : Number(r.extraBreakMinutes || 0);
           if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : ''));
           if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'Not Approve';
           if (idx.updatedAt !== undefined) row[idx.updatedAt] = new Date();
@@ -732,11 +727,13 @@ function importAttendance_(s, inputRows) {
         }
         fillBlank('in', r.in);
         fillBlank('out', r.out);
-        const calcOffice=calculateOfficeMinutes_(r.in,r.out);
+        const calcOffice=calculateDutyMinutes_(r.in,r.out,r);
         const calcBreak=calculateBreakMinutesFromRow_(r);
+        const calcExtra=calculateExtraBreakMinutesFromRow_(r);
         if (idx.officeMinutes !== undefined && calcOffice !== '' && (row[idx.officeMinutes] === '' || row[idx.officeMinutes] === null || row[idx.officeMinutes] === undefined || Number(row[idx.officeMinutes])===0)) { row[idx.officeMinutes]=calcOffice; changed=true; }
         if (idx.breakMinutes !== undefined && calcBreak>0 && (row[idx.breakMinutes] === '' || row[idx.breakMinutes] === null || row[idx.breakMinutes] === undefined || Number(row[idx.breakMinutes])===0)) { row[idx.breakMinutes]=calcBreak; changed=true; }
         fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : '')));
+        if (idx.extraBreakMinutes !== undefined && calcExtra>0 && (row[idx.extraBreakMinutes] === '' || row[idx.extraBreakMinutes] === null || row[idx.extraBreakMinutes] === undefined || Number(row[idx.extraBreakMinutes])===0)) { row[idx.extraBreakMinutes]=calcExtra; changed=true; }
         if (idx.approveStatus !== undefined && r.approveStatus === 'Approve' && String(row[idx.approveStatus]||'').trim().toUpperCase() !== 'APPROVE') { row[idx.approveStatus]='Approve'; changed=true; }
         else fillBlank('approveStatus', r.approveStatus);
         if (changed && idx.updatedAt !== undefined) row[idx.updatedAt]=new Date();
@@ -775,23 +772,48 @@ function normalizeAttendanceImportRow_(raw) {
     out: normalizeAttendanceTime_(pick(['out','OUT','outTime','OUT Time','Out Time'])),
     officeMinutes: normalizeNumber_(pick(['officeMinutes','Office Minutes','office time','Office Time'])),
     breakMinutes: normalizeNumber_(pick(['breakMinutes','Break Minutes','break time','Break Time'])),
+    extraBreakMinutes: normalizeNumber_(pick(['extraBreakMinutes','Extra Break Minutes','extra break minutes','Extra Break Time'])),
     status: normalizeAttendanceStatus_(pick(['status','Status'])),
     approveStatus: normalizeApprovalStatus_(pick(['approveStatus','Approve/Not Approve','Approval','Approve','Approved','Approval Status','approvalStatus']))
   };
 }
 
+function breakRule_(type, namazType){
+  const t=String(type||'').trim(), n=String(namazType||'').trim();
+  if(t==='Lunch') return {label:'Lunch Time',max:25,range:'1:00 PM - 4:00 PM'};
+  if(t==='Namaz' && n==='Zohar') return {label:'Namaz - Zohar',max:30,range:'1:00 PM - 2:00 PM'};
+  if(t==='Namaz' && n==='Asr') return {label:'Namaz - Asr',max:30,range:'3:45 PM - 6:15 PM'};
+  if(t==='Namaz' && n==='Juma') return {label:'Namaz - Juma',max:70,range:'12:30 PM - 3:00 PM'};
+  if(t==='Namaz' && n==='Magrib') return {label:'Namaz - Magrib',max:30,range:'5:40 PM - 7:30 PM'};
+  return {label:t||n||'Break',max:0,range:''};
+}
+function getBreakEntries_(r){
+  const out=[];
+  for(let i=1;i<=3;i++){
+    const start=normalizeTime_(r[`break${i}Start`]), end=normalizeTime_(r[`break${i}End`]);
+    if(!start||!end) continue;
+    const type=String(r[`break${i}Type`]||'').trim(), namaz=String(r[`break${i}NamazType`]||'').trim();
+    const actual=minutesBetween_(start,end), rule=breakRule_(type,namaz), extra=rule.max>0?Math.max(0,actual-rule.max):0;
+    out.push({breakNo:i,type:type,namazType:namaz,start:start,end:end,actualMinutes:actual,allowedMinutes:rule.max,extraMinutes:extra,label:rule.label,range:rule.range});
+  }
+  return out;
+}
+function calculateBreakMinutesFromRow_(r){
+  return getBreakEntries_(r).reduce((sum,x)=>sum+x.actualMinutes,0);
+}
+function calculateExtraBreakMinutesFromRow_(r){
+  return getBreakEntries_(r).reduce((sum,x)=>sum+x.extraMinutes,0);
+}
+function calculateDutyMinutes_(inTime,outTime,r){
+  const gross=calculateOfficeMinutes_(inTime,outTime);
+  if(gross==='') return '';
+  return Math.max(0,Math.round(Number(gross)-calculateExtraBreakMinutesFromRow_(r||{})));
+}
 function calculateOfficeMinutes_(inTime,outTime){
   const a=normalizeTime_(inTime), b=normalizeTime_(outTime);
   if(!a||!b) return '';
   const n=minutesBetween_(a,b);
   return n>0 ? Math.round(n) : '';
-}
-function calculateBreakMinutesFromRow_(r){
-  let total=0;
-  for(let i=1;i<=3;i++){
-    total += minutesBetween_(normalizeTime_(r[`break${i}Start`]), normalizeTime_(r[`break${i}End`]));
-  }
-  return total>0 ? Math.round(total) : 0;
 }
 
 function normalizeNumber_(v) {
@@ -864,7 +886,7 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
   if(!tmIn && !tmOut) throw new Error('IN Time ya OUT Time enter karein.');
   if(tmOut && !tmIn) throw new Error('Pehle IN Time enter karein.');
   if(tmIn && tmOut && minutesBetween_(tmIn,tmOut)<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
   if(!existing){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}); existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve',updatedAt:new Date()}; }
   const patch={}; if(tmIn) patch.in=tmIn; if(tmOut) patch.out=tmOut;
@@ -898,6 +920,8 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
     breakTotal+=minutesBetween_(start,end);
   }
   patch.breakMinutes=Math.round(breakTotal);
+  patch.extraBreakMinutes=Math.round(calculateExtraBreakMinutesFromRow_(Object.assign({},existing,patch)));
+  if(finalIn&&finalOut) patch.officeMinutes=calculateDutyMinutes_(finalIn,finalOut,Object.assign({},existing,patch));
   patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
   appendActivity_(f,user,'Attendance',`Attendance saved for ${date}`);
@@ -917,7 +941,7 @@ function punch_(s,type,dateStr,timeStr) {
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const rows=readRows_(sh);
   let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
@@ -948,7 +972,7 @@ function punch_(s,type,dateStr,timeStr) {
 
 function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reason){
   const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
-  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
   const date=normalizeAttendanceDate_(dateStr); if(!date) throw new Error('Valid attendance date select karein.');
   const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'); if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const n=Number(breakNo); if(![1,2,3].includes(n)) throw new Error('Maximum 3 breaks allowed hain.');
@@ -962,7 +986,10 @@ function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reas
   for(let i=1;i<n;i++) if(!row[`break${i}End`]) throw new Error(`Break ${i} pehle complete karein.`);
   const prefix=`break${n}`;
   const oldMinutes=[1,2,3].reduce((sum,i)=>sum+minutesBetween_(row[`break${i}Start`],row[`break${i}End`]),0);
-  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins; patch.updatedAt=new Date();
+  const patch={}; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(reason||''); patch.breakMinutes=oldMinutes-minutesBetween_(row[`${prefix}Start`],row[`${prefix}End`])+mins;
+  const projected=Object.assign({},row,patch); patch.extraBreakMinutes=Math.round(calculateExtraBreakMinutesFromRow_(projected));
+  if(normalizeTime_(row.in)&&normalizeTime_(row.out)) patch.officeMinutes=calculateDutyMinutes_(row.in,row.out,projected);
+  patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
   appendActivity_(f,user,'Attendance Break',`${type}${namazType?` (${namazType})`:''} · ${start}-${end} · ${date}`);
   return {date,breakNo:n,breakType:type,namazType:namazType||'',startTime:start,endTime:end,breakMinutes:patch.breakMinutes};
@@ -1318,6 +1345,69 @@ function reports_(s,range) {
   return out;
 }
 
+
+function advancedReports_(s,range){
+  const cache=CacheService.getScriptCache();
+  const key='OTR_ADV_REPORT_'+String(s.username)+'_'+String(range||'month');
+  const cached=cache.get(key); if(cached){try{return JSON.parse(cached);}catch(e){}}
+  const all=readUsersCached_().filter(function(u){return String(u.status||'ACTIVE')==='ACTIVE'&&u.employeeId;});
+  const visible=reportUsersForSession_(s,all);
+  const now=new Date();
+  const today=Utilities.formatDate(now,Session.getScriptTimeZone(),'yyyy-MM-dd');
+  const month=Number(Utilities.formatDate(now,Session.getScriptTimeZone(),'MM'));
+  const year=Number(Utilities.formatDate(now,Session.getScriptTimeZone(),'yyyy'));
+  const cutoff=range==='year'?`${year}-01-01`:(range==='month'?`${year}-${String(month).padStart(2,'0')}-01`:'0000-01-01');
+  const end=range==='year'?`${year}-12-31`:(range==='month'?Utilities.formatDate(new Date(year,month,0),Session.getScriptTimeZone(),'yyyy-MM-dd'):'9999-12-31');
+  const attendanceSummary={Present:0,Absent:0,Leave:0,Holiday:0,'Weekly Off':0,Other:0};
+  const breakTotals={}; const employeeBreakRows=[]; const attendanceRows=[]; const overdueTasks=[];
+  visible.forEach(function(u){
+    const f=getEmployeeFile_(u), ash=f.getSheetByName('Attendance'), tsh=f.getSheetByName('Tasks');
+    const ar=ash?readRows_(ash):[];
+    const tr=tsh?readRows_(tsh):[];
+    let present=0,leave=0,holiday=0,weekoff=0,absent=0,breakM=0,extraBreakM=0,late=0,early=0,overtime=0;
+    ar.forEach(function(r){
+      const d=normalizeAttendanceDate_(r.date); if(!d||d<cutoff||d>end)return;
+      const status=normalizeAttendanceStatus_(r.status||'');
+      if(status==='Present')present++; else if(status==='Leave')leave++; else if(status==='Holiday')holiday++; else if(status==='Weekly Off')weekoff++; else if(status==='Absent')absent++; else attendanceSummary.Other++;
+      if(attendanceSummary[status]!==undefined) attendanceSummary[status]++;
+      const bm=Number(r.breakMinutes||calculateBreakMinutesFromRow_(r)||0); const xb=Number(r.extraBreakMinutes||calculateExtraBreakMinutesFromRow_(r)||0); breakM+=bm; extraBreakM+=xb;
+      for(let i=1;i<=3;i++){
+        const type=String(r[`break${i}Type`]||'').trim(), namaz=String(r[`break${i}NamazType`]||'').trim();
+        const mins=minutesBetween_(normalizeTime_(r[`break${i}Start`]),normalizeTime_(r[`break${i}End`])); if(!mins)continue;
+        const label=type==='Lunch'?'Lunch Time':(namaz?`Namaz - ${namaz}`:'Break');
+        breakTotals[label]=(breakTotals[label]||0)+mins;
+      }
+      const settings=employeeSettings_(u); const it=normalizeTime_(r.in), ot=normalizeTime_(r.out); const oi=normalizeTime_(settings.officeInTime), oo=normalizeTime_(settings.officeOutTime);
+      if(it&&oi&&minutesBetween_(oi,it)>0)late++;
+      if(ot&&oo&&minutesBetween_(ot,oo)>0)overtime++;
+      if(ot&&oo&&minutesBetween_(ot,oo)<0)early++;
+      attendanceRows.push({employee:u.name,employeeId:u.employeeId,date:d,in:r.in||'',out:r.out||'',status:status||'Other',late:Boolean(it&&oi&&minutesBetween_(oi,it)>0),early:Boolean(ot&&oo&&minutesBetween_(ot,oo)<0),overtime:Boolean(ot&&oo&&minutesBetween_(ot,oo)>0)});
+    });
+    tr.forEach(function(t){const due=normalizeAttendanceDate_(t.due); if(due&&due<today&&!['COMPLETED','CANCELLED'].includes(String(t.status||''))) overdueTasks.push({employee:u.name,employeeId:u.employeeId,task:t.name,due:due,status:t.status||'ASSIGNED'});});
+    employeeBreakRows.push({employee:u.name,employeeId:u.employeeId,department:u.department||'',present,leave,holiday,weekoff,absent,totalBreakMinutes:breakM,extraBreakMinutes:extraBreakM,late,early,overtime});
+  });
+  const out={attendanceSummary,breakTotals,employeeBreakRows,attendanceRows,overdueTasks,generatedAt:new Date().toISOString(),range,scope:visible.length,role:s.role};
+  try{cache.put(key,JSON.stringify(out),20);}catch(e){}
+  return out;
+}
+
+function previewAttendanceImport_(s,inputRows){
+  assertMasterAdmin_(s);
+  if(!Array.isArray(inputRows)||!inputRows.length) throw new Error('Import file mein koi attendance record nahi mila.');
+  const users=readUsersCached_().filter(function(u){return String(u.status||'ACTIVE')==='ACTIVE';});
+  const byCode={}; users.forEach(function(u){byCode[String(u.employeeCode||'').trim()]=u;});
+  const errors=[], preview=[]; let valid=0, approved=0, notApproved=0;
+  inputRows.slice(0,5000).forEach(function(raw,idx){
+    const r=normalizeAttendanceImportRow_(raw);
+    if(!r.employeeCode){errors.push(`Row ${idx+2}: Employee Id missing.`);return;}
+    if(!r.date){errors.push(`Row ${idx+2}: Date missing.`);return;}
+    if(!byCode[String(r.employeeCode).trim()]){errors.push(`Row ${idx+2}: Employee Id ${r.employeeCode} not found.`);return;}
+    valid++; if(r.approveStatus==='Approve')approved++; else notApproved++;
+    preview.push({row:idx+2,employeeId:r.employeeCode,date:r.date,in:r.in,out:r.out,officeMinutes:calculateDutyMinutes_(r.in,r.out,r)||r.officeMinutes,breakMinutes:r.breakMinutes===''?calculateBreakMinutesFromRow_(r):r.breakMinutes,extraBreakMinutes:r.extraBreakMinutes===''?calculateExtraBreakMinutesFromRow_(r):r.extraBreakMinutes,status:r.status||'',approval:r.approveStatus});
+  });
+  return {total:inputRows.length,valid,errors:errors.slice(0,100),approved,notApproved,preview:preview.slice(0,30)};
+}
+
 function reportUsersForSession_(s,all){
   const role=String(s.role||'EMPLOYEE');
   if(role==='MASTER_ADMIN'||role==='ADMIN') return all.filter(u=>u.employeeId);
@@ -1634,7 +1724,7 @@ function setupEmployeeSheets_(ss,u) {
   const first=ss.getSheets()[0]; first.setName('Profile');
   const map={
     Profile:['name','employeeId','username','role','department','designation','phone','whatsapp','office','address','country','region','state','division','district','year'],
-    Attendance:['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt'],
+    Attendance:['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt'],
     Tasks:['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','expectedMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey'],
     TaskTime:['taskId','date','start','end','minutes'],
     Leave:['id','from','to','type','reason','status','createdAt'],

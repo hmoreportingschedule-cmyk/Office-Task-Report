@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.62
+// Office Task Report V.65
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -149,7 +149,7 @@ function Sidebar({ open, setOpen, session, view, setView, logout }) {
   ];
   const canAdmin = ["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   return <aside className={`sidebar ${open ? "open" : ""}`}>
-    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.62</span></div></div>
+    <div className="side-brand"><div className="brand-mark small"><ClipboardList size={21}/></div><div><b>Office Task</b><span>Report V.65</span></div></div>
     <div className="side-user"><div className="avatar">{(session.name || "U").slice(0,1).toUpperCase()}</div><div><b>{session.name}</b><span>{session.role.replaceAll("_"," ")}</span></div></div>
     <nav>
       {items.map(([id,label,Icon]) => {
@@ -242,7 +242,7 @@ function Attendance({session,notify}) {
   const nowForPeriod=new Date();
   const [reportMonth,setReportMonth]=useState(String(nowForPeriod.getMonth()+1).padStart(2,'0'));
   const [reportYear,setReportYear]=useState(String(nowForPeriod.getFullYear()));
-  const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null);
+  const [importBusy,setImportBusy]=useState(false); const [importResult,setImportResult]=useState(null); const [importPreview,setImportPreview]=useState(null);
   const [attendanceDate,setAttendanceDate]=useState("");
   const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
   const emptyBreak=()=>({type:"",namazType:"",start:"",end:"",reason:""});
@@ -325,7 +325,9 @@ function Attendance({session,notify}) {
       const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:"array",cellDates:true});
       const sheet=wb.Sheets[wb.SheetNames[0]]; const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
       if(!rows.length)throw new Error("Excel/CSV file mein koi record nahi mila.");
-      const result=await api("importAttendance",{session,rows}); setImportResult(result);
+      const preview=await api("previewAttendanceImport",{session,rows}); setImportPreview(preview);
+      if(preview.errors?.length){throw new Error(`Import preview mein ${preview.errors.length} error(s) hain. Pehle file correct karein.`)}
+      const result=await api("importAttendance",{session,rows}); setImportResult(result); setImportPreview(null);
       notify("success",`Attendance import complete: ${result.added||0} added, ${result.updated||0} pending fields filled, ${result.skipped||0} already complete. Employee sync done.`); await load();
     }catch(err){notify("error",err.message);setImportResult({errors:[err.message]});}
     finally{setImportBusy(false);if(fileRef.current)fileRef.current.value="";}
@@ -348,6 +350,7 @@ function Attendance({session,notify}) {
         </div>
       </div>
       {importResult && <div className="import-summary"><b>Import Result:</b> Added {importResult.added||0} · Updated Pending {importResult.updated||0} · Skipped {importResult.skipped||0}{importResult.errors?.length?` · Errors ${importResult.errors.length}`:""}</div>}
+      {importPreview && <div className="import-summary"><b>Import Preview:</b> Valid {importPreview.valid||0} · Approve {importPreview.approved||0} · Not Approve {importPreview.notApproved||0} · Preview rows {importPreview.preview?.length||0}</div>}
       {importResult?.errors?.length>0 && <div className="import-errors">{importResult.errors.slice(0,8).map((x,i)=><div key={i}>{x}</div>)}</div>}
     </section>}
 
@@ -376,7 +379,7 @@ function Attendance({session,notify}) {
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
       </section>
-      <section className="panel recent-attendance-panel"><PanelTitle title="Attendance Record" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Total Break Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes||0,r.breakMinutes||0,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
+      <section className="panel recent-attendance-panel"><PanelTitle title="Attendance Record" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Total Break Minutes","Extra Break Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes||0,r.breakMinutes||0,r.extraBreakMinutes||0,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
       <section className="panel"><PanelTitle title="Break Time Report" action={<span className="muted">Only over maximum time</span>}/>{(data?.breakAlerts||[]).length?<SimpleTable columns={["Date","Break","Allowed Max","Actual","Extra Time"]} rows={(data.breakAlerts||[]).map(r=>[formatAttendanceDate(r.date),r.type,`${r.allowedMinutes} min`,`${r.actualMinutes} min`,`${r.excessMinutes} min`])}/>:<div className="empty">No break over-time records for selected month.</div>}</section>
     </div>
   </div>
@@ -642,15 +645,19 @@ function Approvals({session,notify}) {
 }
 
 function Reports({session,notify}) {
-  const [data,setData]=useState(null), [range,setRange]=useState("month"), [busy,setBusy]=useState(false);
-  const load=async()=>{setBusy(true);try{setData(await api("reports",{session,range}))}catch(e){notify("error",e.message)}finally{setBusy(false)}};
+  const [data,setData]=useState(null), [advanced,setAdvanced]=useState(null), [range,setRange]=useState("month"), [busy,setBusy]=useState(false);
+  const load=async()=>{setBusy(true);try{const [r,a]=await Promise.all([api("reports",{session,range}),api("advancedReports",{session,range})]);setData(r);setAdvanced(a)}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   useEffect(()=>{load()},[range]);
   const downloadCSV=async()=>{try{const r=await api("exportReport",{session,format:"CSV",range});const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([r.content],{type:"text/csv;charset=utf-8"}));a.download=r.fileName;a.click();}catch(e){notify("error",e.message)}};
   const downloadExcel=async()=>{try{const r=await api("exportReport",{session,format:"XLSX",range});const ws=XLSX.utils.aoa_to_sheet(r.rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Report");XLSX.writeFile(wb,r.fileName)}catch(e){notify("error",e.message)}};
   const printPDF=()=>window.print();
   return <div><PageHead title="Reports & Analytics" subtitle="Role-based employee progress, attendance and task analytics." action={<div className="table-actions"><select value={range} onChange={e=>setRange(e.target.value)}><option value="month">This Month</option><option value="year">This Year</option><option value="all">All Data</option></select><button className="secondary" onClick={downloadCSV}><Download size={15}/> CSV</button><button className="secondary" onClick={downloadExcel}><FileSpreadsheet size={15}/> Excel</button><button className="secondary" onClick={printPDF}><FileText size={15}/> PDF</button></div>}/>
     {busy&&!data?<Loader/>:<><div className="kpi-grid"><Kpi label="Employees" value={data?.employees||0}/><Kpi label="Tasks" value={data?.tasks||0}/><Kpi label="Completed" value={data?.completed||0}/><Kpi label="Pending" value={data?.pending||0}/><Kpi label="Present Today" value={data?.present||0}/></div>
-    <div className="two-col"><section className="panel"><PanelTitle title="Task Trend"/><div className="chart"><ResponsiveContainer width="100%" height={280}><BarChart data={data?.trend||[]}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="label"/><YAxis/><Tooltip/><Bar dataKey="completed" fill="#0f766e" radius={[5,5,0,0]}/><Bar dataKey="pending" fill="#f59e0b" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></section><section className="panel"><PanelTitle title="Employee Progress"/><SimpleTable columns={["Employee","Department","Tasks","Completed","Pending","Progress"]} rows={(data?.employeesRows||[]).map(r=>[r.name,r.department||"-",r.tasks,r.completed,r.pending,`${r.progress}%`])}/></section></div></>}
+    <div className="two-col"><section className="panel"><PanelTitle title="Task Trend"/><div className="chart"><ResponsiveContainer width="100%" height={280}><BarChart data={data?.trend||[]}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="label"/><YAxis/><Tooltip/><Bar dataKey="completed" fill="#0f766e" radius={[5,5,0,0]}/><Bar dataKey="pending" fill="#f59e0b" radius={[5,5,0,0]}/></BarChart></ResponsiveContainer></div></section><section className="panel"><PanelTitle title="Employee Progress"/><SimpleTable columns={["Employee","Department","Tasks","Completed","Pending","Progress"]} rows={(data?.employeesRows||[]).map(r=>[r.name,r.department||"-",r.tasks,r.completed,r.pending,`${r.progress}%`])}/></section></div>
+    <div className="two-col"><section className="panel"><PanelTitle title="Attendance Summary"/><SimpleTable columns={["Status","Total"]} rows={Object.entries(advanced?.attendanceSummary||{}).map(([k,v])=>[k,v])}/></section><section className="panel"><PanelTitle title="Break Analysis"/><SimpleTable columns={["Break","Total Minutes"]} rows={Object.entries(advanced?.breakTotals||{}).map(([k,v])=>[k,v])}/></section></div>
+    <section className="panel"><PanelTitle title="Employee Attendance & Break Summary"/><SimpleTable columns={["Employee","Department","Present","Leave","Holiday","Weekoff","Absent","Break Minutes","Extra Break Minutes","Late","Early","Overtime"]} rows={(advanced?.employeeBreakRows||[]).map(r=>[r.employee,r.department||"-",r.present,r.leave,r.holiday,r.weekoff,r.absent,r.totalBreakMinutes,r.extraBreakMinutes||0,r.late,r.early,r.overtime])}/></section>
+    <section className="panel"><PanelTitle title="Overdue Tasks" action={<span className="muted">Open / delayed tasks only</span>}/>{(advanced?.overdueTasks||[]).length?<SimpleTable columns={["Employee","Task","Due","Status"]} rows={advanced.overdueTasks.map(r=>[r.employee,r.task,formatAttendanceDate(r.due),r.status])}/>:<div className="empty">No overdue tasks for selected range.</div>}</section>
+    </>}
   </div>
 }
 
