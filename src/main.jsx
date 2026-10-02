@@ -9,12 +9,12 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report - Google Apps Script Web App
-// V.7: default endpoint configured; Vercel env variable can still override it.
-// Office Task Report - fixed production Apps Script endpoint.
-// Deliberately do NOT allow a stale Vercel VITE_APPS_SCRIPT_URL value to override it.
-const API_URL =
-  "https://script.google.com/macros/s/AKfycbyfL_lBPCkUlHzvv0iWvbUyNmhjSE7dVh6yqHp0L4E9JAs8S6e9jDx3v2dKku3ClK6M/exec";
+// Office Task Report V.30
+// IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
+// Script Web App redirects to googleusercontent.com and browser CORS handling
+// can block the response. V.30 sends requests through the same-origin Vercel
+// serverless proxy instead.
+const API_URL = "/api/office-task";
 
 async function api(action, payload = {}) {
   const controller = new AbortController();
@@ -22,7 +22,7 @@ async function api(action, payload = {}) {
   try {
     const res = await fetch(API_URL, {
       method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, ...payload }),
       signal: controller.signal,
       cache: "no-store"
@@ -39,7 +39,7 @@ async function api(action, payload = {}) {
     return data;
   } catch (e) {
     if (e && e.name === "AbortError") {
-      throw new Error("Sign in timeout. Apps Script Web App deployment/access ya network connection check karein.");
+      throw new Error("Sign in timeout. Vercel proxy ya Apps Script backend response check karein.");
     }
     throw e;
   } finally {
