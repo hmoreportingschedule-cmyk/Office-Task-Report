@@ -9,7 +9,7 @@ import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContai
 import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.60
+// Office Task Report V.61
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
@@ -246,18 +246,22 @@ function Attendance({session,notify}) {
   const [inTime,setInTime]=useState(""); const [outTime,setOutTime]=useState("");
   const emptyBreak=()=>({type:"",namazType:"",start:"",end:"",reason:""});
   const [breaks,setBreaks]=useState([emptyBreak(),emptyBreak(),emptyBreak()]);
-  const fileRef=React.useRef(null);
+  const fileRef=React.useRef(null); const loadSeq=React.useRef(0);
   const isAdmin=["MASTER_ADMIN","ADMIN","HOD"].includes(session.role);
   const load=async()=>{
+    const seq=++loadSeq.current;
     setBusy(true);
     try{
       const r=await api("attendance",{session,month:reportMonth,year:reportYear});
+      if(seq!==loadSeq.current) return;
       setData(r);
-      setAttendanceDate(r.editableDates?.[0]?.date || "");
-      const selected=(r.rows||[]).find(x=>x.date=== (r.editableDates?.[0]?.date || ""));
+      const firstEditable=r.editableDates?.[0]?.date || "";
+      setAttendanceDate(firstEditable);
+      const selected=(r.rows||[]).find(x=>x.date===firstEditable);
       setInTime((selected?.in||"").slice(0,5));
       setOutTime((selected?.out||"").slice(0,5));
-    }catch(e){notify("error",e.message)}finally{setBusy(false)}
+      setBreaks([1,2,3].map(i=>({type:selected?.[`break${i}Type`]||"",namazType:selected?.[`break${i}NamazType`]||"",start:(selected?.[`break${i}Start`]||"").slice(0,5),end:(selected?.[`break${i}End`]||"").slice(0,5),reason:selected?.[`break${i}Reason`]||""})));
+    }catch(e){if(seq===loadSeq.current) notify("error",e.message)}finally{if(seq===loadSeq.current)setBusy(false)}
   };
   useEffect(()=>{load()},[]);
 
@@ -275,19 +279,13 @@ function Attendance({session,notify}) {
     if(!attendanceDate){notify("error","Attendance date select karein.");return;}
     if(!inTime && !outTime){notify("error","IN Time ya OUT Time enter karein.");return;}
     try{
-      // Save IN first and OUT second so existing server-side validation remains intact.
-      if(inTime) await api("punch",{session,type:"IN",date:attendanceDate,time:inTime});
-      if(outTime) await api("punch",{session,type:"OUT",date:attendanceDate,time:outTime});
-      for(let i=0;i<breaks.length;i++){
-        const b=breaks[i];
-        if(!b.type && !b.start && !b.end && !b.reason) continue;
-        await api("saveBreak",{session,date:attendanceDate,breakNo:i+1,breakType:b.type,namazType:b.namazType,startTime:b.start,endTime:b.end,reason:b.reason});
-      }
+      setBusy(true);
+      await api("saveAttendance",{session,date:attendanceDate,inTime,outTime,breaks});
       notify("success","Attendance aur break details save ho gayi.");
       await load();
     }catch(e){
       notify("error", e?.message || "Attendance save nahi ho saki. Please dobara try karein.");
-    }
+    }finally{setBusy(false);}
   };
 
   const downloadFormat=(type)=>{
@@ -366,7 +364,7 @@ function Attendance({session,notify}) {
           <button className="primary full-span" onClick={saveManualAttendance} disabled={busy || !!selectedRule?.nonWorking}><CheckCircle2 size={16}/> Save Attendance</button>
         </div>
       </section>
-      <section className="panel recent-attendance-panel"><PanelTitle title="Recent Attendance" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
+      <section className="panel recent-attendance-panel"><PanelTitle title="Attendance Record" action={<div className="table-actions"><select value={reportMonth} onChange={e=>setReportMonth(e.target.value)} aria-label="Attendance Month">{Array.from({length:12},(_,i)=>{const v=String(i+1).padStart(2,'0');return <option key={v} value={v}>{new Date(2000,i,1).toLocaleString('en-IN',{month:'long'})}</option>})}</select><select value={reportYear} onChange={e=>setReportYear(e.target.value)} aria-label="Attendance Year">{Array.from({length:13},(_,i)=>{const y=String(new Date().getFullYear()-5+i);return <option key={y} value={y}>{y}</option>})}</select><button className="secondary" onClick={load}><RefreshCw size={14}/> Refresh</button></div>}/>{busy&&!data?<Loader/>:<SimpleTable columns={["Date","In Time","Out Time","Office Minutes","Total Break Minutes","Status","Approval"]} rows={(data?.rows||[]).map(r=>[formatAttendanceDate(r.date),formatAttendanceTime(r.in),formatAttendanceTime(r.out),r.officeMinutes||0,r.breakMinutes||0,formatAttendanceStatus(r.status),formatApprovalStatus(r.approveStatus)])}/>}</section>
     </div>
   </div>
 }
@@ -542,6 +540,26 @@ function Templates({session,notify}) {
   </div>
 }
 
+async function compressProfilePhoto(file){
+  if(!file) return null;
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error("Photo read nahi ho saki."));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error("Photo load nahi ho saki."));
+      img.onload=()=>{
+        const max=900, scale=Math.min(1,max/Math.max(img.width,img.height));
+        const canvas=document.createElement("canvas"); canvas.width=Math.max(1,Math.round(img.width*scale)); canvas.height=Math.max(1,Math.round(img.height*scale));
+        const ctx=canvas.getContext("2d"); ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        canvas.toBlob(blob=>{if(!blob){reject(new Error("Photo compress nahi ho saki."));return;} const name=(file.name||"profile").replace(/\.[^.]+$/i,"")+".jpg"; const reader2=new FileReader(); reader2.onload=()=>resolve({photoDataUrl:reader2.result,photoFileName:name,photoMimeType:"image/jpeg"}); reader2.onerror=()=>reject(new Error("Photo prepare nahi ho saki.")); reader2.readAsDataURL(blob);},"image/jpeg",0.82);
+      };
+      img.src=String(reader.result||"");
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function Employees({session,notify}) {
   const empty={name:"",code:"",username:"",password:"",role:"EMPLOYEE",department:"",designation:"",phone:"",whatsapp:"",office:"",address:"",officeInTime:"",officeOutTime:"",weekoffDay:"",country:"",region:"",state:"",division:"",district:""};
   const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(false); const [busy,setBusy]=useState(false); const [profile,setProfile]=useState(null); const [photoFile,setPhotoFile]=useState(null); const [photoPreview,setPhotoPreview]=useState("");
@@ -551,10 +569,10 @@ function Employees({session,notify}) {
   const edit=(r)=>{setForm({...empty,name:r.name||"",code:r.code||"",username:r.username||"",password:"",role:r.role||"EMPLOYEE",department:r.department||"",designation:r.designation||"",phone:r.phone||"",whatsapp:r.whatsapp||"",office:r.office||"",address:r.address||"",officeInTime:r.officeInTime||"",officeOutTime:r.officeOutTime||"",weekoffDay:String(r.weekoffDay??""),country:r.country||"",region:r.region||"",state:r.state||"",division:r.division||"",district:r.district||""});setPhotoFile(null);setPhotoPreview("");setEditing(true);window.scrollTo({top:0,behavior:"smooth"})};
   const reset=()=>{setForm(empty);setPhotoFile(null);setPhotoPreview("");setEditing(false)};
   const selectEmployeePhoto=(e)=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return}if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return}setPhotoFile(f);const reader=new FileReader();reader.onload=()=>setPhotoPreview(String(reader.result||""));reader.readAsDataURL(f)};
-  const readPhotoForSave=async(file)=>{if(!file)return null;return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({photoDataUrl:reader.result,photoFileName:file.name,photoMimeType:file.type});reader.onerror=()=>reject(new Error("Photo read nahi ho saki."));reader.readAsDataURL(file)})};
+  const readPhotoForSave=async(file)=>compressProfilePhoto(file);
   const save=async(e)=>{e.preventDefault();setBusy(true);try{const photo=await readPhotoForSave(photoFile);const employeePayload={...form,...(photo||{})};if(editing){await api("updateEmployee",{session,employee:employeePayload});notify("success","User updated and synced.")}else{const r=await api("createEmployee",{session,employee:employeePayload});notify("success",`User created successfully. Password: ${r.temporaryPassword||"set"}`)}reset();load()}catch(e){notify("error",e?.message||"User save nahi ho saka.")}finally{setBusy(false)}};
   const viewProfile=async(r)=>{try{const x=await api("employeeProfile",{session,username:r.username});setProfile(x.profile)}catch(e){notify("error",e.message)}};
-  const uploadEmployeePhoto=async(e)=>{const f=e.target.files?.[0]; if(!f||!profile)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>2*1024*1024){notify("error","Photo 2 MB se chhoti honi chahiye.");e.target.value="";return} const reader=new FileReader(); reader.onload=async()=>{try{const r=await api("uploadProfilePhoto",{session,targetUsername:profile.username,fileName:f.name,dataUrl:reader.result,mimeType:f.type});setProfile(p=>({...p,photoUrl:r.photoUrl}));notify("success","Employee profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{e.target.value=""}}; reader.readAsDataURL(f)};
+  const uploadEmployeePhoto=async(e)=>{const f=e.target.files?.[0]; if(!f||!profile)return; if(!f.type.startsWith("image/")){notify("error","Sirf image file upload karein.");e.target.value="";return} if(f.size>5*1024*1024){notify("error","Photo 5 MB se chhoti honi chahiye.");e.target.value="";return} try{const photo=await compressProfilePhoto(f); const r=await api("uploadProfilePhoto",{session,targetUsername:profile.username,...photo}); setProfile(p=>({...p,photoUrl:r.photoUrl})); notify("success","Employee profile photo update ho gayi.")}catch(err){notify("error",err.message)}finally{e.target.value=""}};
   const remove=async(r)=>{if(r.username==="admin"){notify("error","Master Admin cannot be deleted.");return}if(!window.confirm(`Delete ${r.name} (${r.code})?`))return;try{await api("deleteEmployee",{session,username:r.username});notify("success","User deleted/deactivated and Google Sheet synced.");load()}catch(e){notify("error",e.message)}};
   return <div>
     <PageHead title="User Create" subtitle="Employee Id ke saath office timing aur weekoff bhi Admin set/edit kar sakta hai." action={<button className="secondary" onClick={load}><RefreshCw size={16}/> Sync</button>}/>

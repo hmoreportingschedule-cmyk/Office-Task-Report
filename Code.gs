@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.51',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.61',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.51',
+      version:'V.61',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.51',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.61',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -351,6 +351,7 @@ function route_(action,b) {
     case 'attendance': return attendance_(b.session,b.month,b.year);
     case 'importAttendance': return importAttendance_(b.session,b.rows);
     case 'punch': return punch_(b.session,b.type,b.date,b.time);
+    case 'saveAttendance': return saveAttendance_(b.session,b.date,b.inTime,b.outTime,b.breaks);
     case 'saveBreak': return saveBreak_(b.session,b.date,b.breakNo,b.breakType,b.namazType,b.startTime,b.endTime,b.reason);
     case 'notes': return notes_(b.session);
     case 'saveNote': return saveNote_(b.session,b.note);
@@ -583,7 +584,7 @@ function attendance_(s,month,year) {
   // Testing-friendly: allow any past date, but never allow a future date.
   // The UI uses the same lower bound for a consistent experience.
   const editableDates=[];
-  const start=new Date(today); start.setDate(start.getDate()-90);
+  const start=new Date(today); start.setDate(start.getDate()-2);
   for(let d=new Date(today); d>=start; d.setDate(d.getDate()-1)){
     const ds=Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd');
     editableDates.push({date:ds,label:ds===todayStr?'Today':(ds===yesterdayStr?'Yesterday':ds),nonWorking:isNonWorkingDate_(ds,rules),reason:rules.reasonMap[ds]||''});
@@ -669,8 +670,8 @@ function importAttendance_(s, inputRows) {
           row[idx.date] = r.date;
           if (idx.in !== undefined) row[idx.in] = r.in || '';
           if (idx.out !== undefined) row[idx.out] = r.out || '';
-          if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = r.officeMinutes === '' ? '' : Number(r.officeMinutes || 0);
-          if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? '' : Number(r.breakMinutes || 0);
+          if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = r.officeMinutes === '' ? calculateOfficeMinutes_(r.in,r.out) : Number(r.officeMinutes || 0);
+          if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? calculateBreakMinutesFromRow_(r) : Number(r.breakMinutes || 0);
           if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : ''));
           if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'NOT APPROVE';
           values.push(row);
@@ -691,10 +692,13 @@ function importAttendance_(s, inputRows) {
         }
         fillBlank('in', r.in);
         fillBlank('out', r.out);
-        fillBlank('officeMinutes', r.officeMinutes);
-        fillBlank('breakMinutes', r.breakMinutes);
+        const calcOffice=calculateOfficeMinutes_(r.in,r.out);
+        const calcBreak=calculateBreakMinutesFromRow_(r);
+        if (idx.officeMinutes !== undefined && calcOffice !== '' && (row[idx.officeMinutes] === '' || row[idx.officeMinutes] === null || row[idx.officeMinutes] === undefined || Number(row[idx.officeMinutes])===0)) { row[idx.officeMinutes]=calcOffice; changed=true; }
+        if (idx.breakMinutes !== undefined && calcBreak>0 && (row[idx.breakMinutes] === '' || row[idx.breakMinutes] === null || row[idx.breakMinutes] === undefined || Number(row[idx.breakMinutes])===0)) { row[idx.breakMinutes]=calcBreak; changed=true; }
         fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : '')));
-        fillBlank('approveStatus', r.approveStatus || 'NOT APPROVE');
+        if (idx.approveStatus !== undefined && r.approveStatus === 'Approve' && String(row[idx.approveStatus]||'').trim().toUpperCase() !== 'APPROVE') { row[idx.approveStatus]='Approve'; changed=true; }
+        else fillBlank('approveStatus', r.approveStatus);
         if (changed) updated++; else skipped++;
       });
 
@@ -731,8 +735,22 @@ function normalizeAttendanceImportRow_(raw) {
     officeMinutes: normalizeNumber_(pick(['officeMinutes','Office Minutes','office time','Office Time'])),
     breakMinutes: normalizeNumber_(pick(['breakMinutes','Break Minutes','break time','Break Time'])),
     status: normalizeAttendanceStatus_(pick(['status','Status'])),
-    approveStatus: normalizeApprovalStatus_(pick(['approveStatus','Approve/Not Approve','Approve','Approval Status','approvalStatus']))
+    approveStatus: normalizeApprovalStatus_(pick(['approveStatus','Approve/Not Approve','Approval','Approve','Approved','Approval Status','approvalStatus']))
   };
+}
+
+function calculateOfficeMinutes_(inTime,outTime){
+  const a=normalizeTime_(inTime), b=normalizeTime_(outTime);
+  if(!a||!b) return '';
+  const n=minutesBetween_(a,b);
+  return n>0 ? Math.round(n) : '';
+}
+function calculateBreakMinutesFromRow_(r){
+  let total=0;
+  for(let i=1;i<=3;i++){
+    total += minutesBetween_(normalizeTime_(r[`break${i}Start`]), normalizeTime_(r[`break${i}End`]));
+  }
+  return total>0 ? Math.round(total) : 0;
 }
 
 function normalizeNumber_(v) {
@@ -788,6 +806,48 @@ function normalizeAttendanceDate_(v) {
   const d=new Date(s);
   if(!isNaN(d.getTime())) return Utilities.formatDate(d,Session.getScriptTimeZone(),'yyyy-MM-dd');
   return '';
+}
+
+function saveAttendance_(s,dateStr,inTime,outTime,breaks){
+  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
+  const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+  const date=normalizeAttendanceDate_(dateStr||todayStr);
+  if(!date) throw new Error('Valid attendance date select karein.');
+  if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
+  const d=new Date(todayStr+'T00:00:00'); const minDate=new Date(d); minDate.setDate(minDate.getDate()-2);
+  const minStr=Utilities.formatDate(minDate,Session.getScriptTimeZone(),'yyyy-MM-dd');
+  if(date<minStr) throw new Error('Filhal sirf aaj aur previous 2 days ki attendance allowed hai.');
+  const rules=getAttendanceRules_(user);
+  if(isNonWorkingDate_(date,rules)) throw new Error((rules.reasonMap[date]||'Weekoff / Leave / Adjustment')+' hai. Attendance required nahi hai.');
+  const tmIn=normalizeTime_(inTime), tmOut=normalizeTime_(outTime);
+  if(!tmIn && !tmOut) throw new Error('IN Time ya OUT Time enter karein.');
+  if(tmOut && !tmIn) throw new Error('Pehle IN Time enter karein.');
+  if(tmIn && tmOut && minutesBetween_(tmIn,tmOut)<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
+  ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus']);
+  let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
+  if(!existing){ appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}); existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT',approveStatus:'Not Approve'}; }
+  const patch={}; if(tmIn) patch.in=tmIn; if(tmOut) patch.out=tmOut;
+  const finalIn=tmIn||normalizeTime_(existing.in), finalOut=tmOut||normalizeTime_(existing.out);
+  if(finalIn&&finalOut) patch.officeMinutes=calculateOfficeMinutes_(finalIn,finalOut);
+  if(finalIn) patch.status='PRESENT';
+  const incoming=Array.isArray(breaks)?breaks:[]; let breakTotal=0;
+  for(let i=1;i<=3;i++){
+    const b=incoming[i-1]||{}; const has=!!(b.type||b.start||b.end||b.reason||b.namazType); if(!has) continue;
+    const type=String(b.type||'').trim(), start=normalizeTime_(b.start), end=normalizeTime_(b.end);
+    if(!type) throw new Error(`Break ${i}: Break Type select karein.`);
+    if(!start||!end) throw new Error(`Break ${i}: Start aur End Time dono select karein.`);
+    if(minutesBetween_(start,end)<=0) throw new Error(`Break ${i}: End Time, Start Time ke baad hona chahiye.`);
+    if(type==='Namaz'&&!String(b.namazType||'').trim()) throw new Error(`Break ${i}: Namaz ka type select karein.`);
+    if(type==='Other'&&!String(b.reason||'').trim()) throw new Error(`Break ${i}: Other break ke liye reason likhein.`);
+    if(i>1){ const prev=incoming[i-2]||{}; if(!(prev.type&&prev.start&&prev.end)) throw new Error(`Break ${i-1} pehle complete karein.`); }
+    const prefix=`break${i}`; patch[`${prefix}Type`]=type; patch[`${prefix}NamazType`]=type==='Namaz'?String(b.namazType||''):''; patch[`${prefix}Start`]=start; patch[`${prefix}End`]=end; patch[`${prefix}Reason`]=String(b.reason||''); breakTotal+=minutesBetween_(start,end);
+  }
+  if(incoming.length && breakTotal>=0) patch.breakMinutes=Math.round(breakTotal);
+  updateByKey_(sh,'date',date,patch);
+  appendActivity_(f,user,'Attendance',`Attendance saved for ${date}`);
+  const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||''))&&String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
+  notifyUsers_(admins,'Attendance Updated',`${user.name} (${user.employeeId}) ne ${date} ki attendance update ki hai.`,'ATTENDANCE');
+  return {saved:true,date:date,in:finalIn||'',out:finalOut||'',officeMinutes:patch.officeMinutes||existing.officeMinutes||0,breakMinutes:patch.breakMinutes||0};
 }
 
 function punch_(s,type,dateStr,timeStr) {
