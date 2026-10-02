@@ -376,7 +376,7 @@ function route_(action,b) {
     case 'profile': return profile_(b.session);
     case 'employeeProfile': return employeeProfile_(b.session,b.username);
     case 'changePassword': return changePassword_(b.session,b.currentPassword,b.newPassword);
-    case 'uploadProfilePhoto': return uploadProfilePhoto_(b.session,b.fileName,b.dataUrl,b.mimeType);
+    case 'uploadProfilePhoto': return uploadProfilePhoto_(b.session,b.targetUsername,b.fileName,b.dataUrl,b.mimeType);
     case 'advanced': return advanced_(b.session);
     case 'createHoliday': return createHoliday_(b.session,b.holiday);
     case 'deleteHoliday': return deleteHoliday_(b.session,b.id);
@@ -859,7 +859,7 @@ function createTemplate_(s,t) {
   const allowedCategories={
     'Followup':['Monthly Report','Hind Mushawarat Task','HOD-Department Points Task','Data Required','Other'],
     'File Work':['Analise','Errors Cheking','Application Required Data','Other'],
-    'Outdoor':['Office Related','Journey','Tarbiyati Ijtima','Other'],
+    'Outdoor':['Office Related','Journey','Tarbiyati Ijtima','3 Din Qafila','Other'],
     'Meeting':['Online Meeting','Physicall Meeting','Other'],
     'Other':['Other']
   };
@@ -881,7 +881,7 @@ function updateTemplate_(s,t) {
   const allowedCategories={
     'Followup':['Monthly Report','Hind Mushawarat Task','HOD-Department Points Task','Data Required','Other'],
     'File Work':['Analise','Errors Cheking','Application Required Data','Other'],
-    'Outdoor':['Office Related','Journey','Tarbiyati Ijtima','Other'],
+    'Outdoor':['Office Related','Journey','Tarbiyati Ijtima','3 Din Qafila','Other'],
     'Meeting':['Online Meeting','Physicall Meeting','Other'],
     'Other':['Other']
   };
@@ -1150,13 +1150,19 @@ function automationTick_(){
 }
 
 function employeeSettings_(user){
-  const defaults={officeCity:user&&user.office||'',officeAddress:user&&user.address||'',officeInTime:'',officeOutTime:'',weekoffDay:''};
+  const globalRows=readRows_(master_().getSheetByName('SystemSettings')), gs={}; globalRows.forEach(function(r){gs[r.key]=r.value;});
+  const defaults={
+    officeCity:user&&user.office||'',
+    officeAddress:user&&user.address||'',
+    officeInTime:user&&user.officeInTime||'',
+    officeOutTime:user&&user.officeOutTime||'',
+    weekoffDay:user&&user.weekoffDay!==undefined&&user.weekoffDay!==''?String(user.weekoffDay):String(gs.WEEKOFF_DAY||'0')
+  };
   if(!user || !user.employeeId) return defaults;
   const sh=master_().getSheetByName('EmployeeSettings'); if(!sh) return defaults;
   const row=readRows_(sh).find(function(r){return String(r.employeeId)===String(user.employeeId);});
   if(!row) return defaults;
-  const globalRows=readRows_(master_().getSheetByName('SystemSettings')); const gs={};globalRows.forEach(function(r){gs[r.key]=r.value;});
-  return {officeCity:row.officeCity||defaults.officeCity,officeAddress:row.officeAddress||defaults.officeAddress,officeInTime:row.officeInTime||'',officeOutTime:row.officeOutTime||'',weekoffDay:row.weekoffDay===''||row.weekoffDay===undefined?String(gs.WEEKOFF_DAY||''):row.weekoffDay};
+  return {officeCity:row.officeCity||defaults.officeCity,officeAddress:row.officeAddress||defaults.officeAddress,officeInTime:row.officeInTime||defaults.officeInTime,officeOutTime:row.officeOutTime||defaults.officeOutTime,weekoffDay:row.weekoffDay===''||row.weekoffDay===undefined?defaults.weekoffDay:String(row.weekoffDay)};
 }
 function saveEmployeeSettings_(user,settings){
   if(!user || !user.employeeId) return;
@@ -1328,21 +1334,26 @@ function changePassword_(s,currentPassword,newPassword){
   return {};
 }
 
-function uploadProfilePhoto_(s,fileName,dataUrl,mimeType){
-  const u=findUser_(s.username); if(!u) throw new Error('User not found.');
+function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
+  // Employee photos are managed from the Admin Users/Profile screen only.
+  assertMasterAdmin_(s);
+  const target=findUser_(targetUsername); if(!target) throw new Error('Employee not found.');
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
   const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/); if(!match) throw new Error('Invalid photo data.');
   const bytes=Utilities.base64Decode(match[2]);
   if(bytes.length>2*1024*1024) throw new Error('Photo 2 MB se chhoti honi chahiye.');
   const folder=DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('PHOTO_FOLDER_ID'));
   const safe=String(fileName||'profile.jpg').replace(/[^a-zA-Z0-9._-]/g,'_');
-  const blob=Utilities.newBlob(bytes,mimeType||match[1],u.employeeId+'_'+safe);
-  const file=folder.createFile(blob); try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){} const url='https://drive.google.com/uc?export=view&id='+file.getId();
+  const blob=Utilities.newBlob(bytes,mimeType||match[1],target.employeeId+'_'+safe);
+  const file=folder.createFile(blob); try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){}
+  const url='https://drive.google.com/uc?export=view&id='+file.getId();
   const sh=master_().getSheetByName('EmployeeSettings'); ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','updatedAt']);
-  const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(u.employeeId));
-  if(existing) updateByKey_(sh,'employeeId',u.employeeId,{photoUrl:url,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,photoUrl:url,updatedAt:new Date()});
-  audit_(s,'UPDATE','PROFILE','Profile photo updated');
-  return {photoUrl:url};
+  const rows=readRows_(sh), existing=rows.find(r=>String(r.employeeId)===String(target.employeeId));
+  if(existing) updateByKey_(sh,'employeeId',target.employeeId,{photoUrl:url,updatedAt:new Date()});
+  else appendObject_(sh,{employeeId:target.employeeId,username:target.username,officeCity:target.office||'',officeAddress:target.address||'',officeInTime:target.officeInTime||'',officeOutTime:target.officeOutTime||'',weekoffDay:target.weekoffDay!==undefined?target.weekoffDay:'',photoUrl:url,updatedAt:new Date()});
+  audit_(s,'UPDATE','PROFILE_PHOTO',`Profile photo updated for ${target.name} (${target.employeeId}) by ${s.username}`);
+  notifyUsers_([target.username],'Profile Photo Updated','Aapki profile photo Admin ne update ki hai.','PROFILE');
+  return {photoUrl:url,employeeId:target.employeeId,username:target.username};
 }
 
 function getEmployeeFile_(u) {
