@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.67
+ * OFFICE TASK REPORT V.68
  * Google Apps Script backend
  *
  * Architecture:
@@ -8,7 +8,7 @@
  * Example: Asif_12345_2026
  */
 
-const USERS_SCHEMA_VERSION = 'V67_CUMULATIVE';
+const USERS_SCHEMA_VERSION = 'V68_CUMULATIVE';
 
 const CONFIG = {
   MASTER_NAME: 'office-task-report',
@@ -24,17 +24,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.67',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.68',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.67',
+      version:'V.68',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.67',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.68',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -383,6 +383,7 @@ function route_(action,b) {
     case 'runAutomation': return runAutomation_(b.session);
     case 'installAutomation': return installAutomation_(b.session);
     case 'profile': return profile_(b.session);
+    case 'profileUpdate': return profileUpdate_(b.session,b.profile);
     case 'employeeProfile': return employeeProfile_(b.session,b.username);
     case 'changePassword': return changePassword_(b.session,b.currentPassword,b.newPassword);
     case 'uploadProfilePhoto': return uploadProfilePhoto_(b.session,b.targetUsername,b.fileName,b.dataUrl,b.mimeType);
@@ -625,9 +626,9 @@ function attendance_(s,month,year,since) {
   const break3Frozen=String((sysRows.find(r=>r.key==='RAMADAN_LUNCH_BREAK_FROZEN')||{}).value||'').toUpperCase()==='TRUE';
   return {
     break3Frozen:break3Frozen,
-    today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:calculateDutyMinutes_(t.in,t.out,t)||t.officeMinutes||0,breakMinutes:t.breakMinutes||calculateBreakMinutesFromRow_(t)||0,extraBreakMinutes:t.extraBreakMinutes||calculateExtraBreakMinutesFromRow_(t)||0,nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
+    today:(function(){const t=normalizedRows.find(r=>r.date===todayStr)||{};return {in:t.in||'',out:t.out||'',officeMinutes:calculateDutyMinutes_(t.in,t.out,t)||0,breakMinutes:calculateBreakMinutesFromRow_(t),extraBreakMinutes:calculateExtraBreakMinutesFromRow_(t),nonWorking:isNonWorkingDate_(todayStr,rules),reason:rules.reasonMap[todayStr]||''};})(),
     rows:(function(){
-      filteredRows.forEach(function(r){ r.officeMinutes=calculateDutyMinutes_(r.in,r.out,r); r.breakMinutes=r.breakMinutes===''?calculateBreakMinutesFromRow_(r):Number(r.breakMinutes||0); r.extraBreakMinutes=r.extraBreakMinutes===''?calculateExtraBreakMinutesFromRow_(r):Number(r.extraBreakMinutes||0); });
+      filteredRows.forEach(function(r){ r.officeMinutes=calculateDutyMinutes_(r.in,r.out,r); r.breakMinutes=calculateBreakMinutesFromRow_(r); r.extraBreakMinutes=calculateExtraBreakMinutesFromRow_(r); r.status=normalizeAttendanceStatus_(r.status||''); r.approveStatus=normalizeApprovalStatus_(r.approveStatus||''); });
       if(!since) return filteredRows.slice().reverse();
       const sinceDate=new Date(String(since));
       if(isNaN(sinceDate.getTime())) return filteredRows.slice().reverse();
@@ -641,7 +642,9 @@ function attendance_(s,month,year,since) {
     selectedYear:selectedYear,
     editableDates:editableDates,
     breakAlerts:breakAlerts.slice().reverse(),
-    syncAt:new Date().toISOString(),
+    syncAt:syncCursorFromRows_(filteredRows),
+    syncCursor:syncCursorFromRows_(filteredRows),
+    serverTime:new Date().toISOString(),
     settings:{officeInTime:(rosterToday&&rosterToday.officeInTime)||office.officeInTime||'',officeOutTime:(rosterToday&&rosterToday.officeOutTime)||office.officeOutTime||'',weekoffLabel:weekDayName_(rules.weekoff),roster:{today:rosterToday||null,yesterday:rosterYesterday||null}}
   };
 }
@@ -708,8 +711,8 @@ function importAttendance_(s, inputRows) {
           if (idx.officeMinutes !== undefined) row[idx.officeMinutes] = (r.in && r.out) ? calculateDutyMinutes_(r.in,r.out,r) : (r.officeMinutes === '' ? calculateOfficeMinutes_(r.in,r.out) : Number(r.officeMinutes || 0));
           if (idx.breakMinutes !== undefined) row[idx.breakMinutes] = r.breakMinutes === '' ? calculateBreakMinutesFromRow_(r) : Number(r.breakMinutes || 0);
           if (idx.extraBreakMinutes !== undefined) row[idx.extraBreakMinutes] = r.extraBreakMinutes === '' ? calculateExtraBreakMinutesFromRow_(r) : Number(r.extraBreakMinutes || 0);
-          if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : ''));
-          if (idx.approveStatus !== undefined) row[idx.approveStatus] = r.approveStatus || 'Not Approve';
+          if (idx.status !== undefined) row[idx.status] = r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'Present' : ''));
+          if (idx.approveStatus !== undefined) row[idx.approveStatus] = normalizeApprovalStatus_(r.approveStatus || '');
           if (idx.updatedAt !== undefined) row[idx.updatedAt] = new Date();
           values.push(row);
           byDate[r.date] = {row:row,index:values.length-1};
@@ -734,7 +737,7 @@ function importAttendance_(s, inputRows) {
         const calcExtra=calculateExtraBreakMinutesFromRow_(r);
         if (idx.officeMinutes !== undefined && calcOffice !== '' && (row[idx.officeMinutes] === '' || row[idx.officeMinutes] === null || row[idx.officeMinutes] === undefined || Number(row[idx.officeMinutes])===0)) { row[idx.officeMinutes]=calcOffice; changed=true; }
         if (idx.breakMinutes !== undefined && calcBreak>0 && (row[idx.breakMinutes] === '' || row[idx.breakMinutes] === null || row[idx.breakMinutes] === undefined || Number(row[idx.breakMinutes])===0)) { row[idx.breakMinutes]=calcBreak; changed=true; }
-        fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'PRESENT' : '')));
+        fillBlank('status', r.status || (isNonWorkingDate_(r.date,rules) ? (rules.reasonMap[r.date] || 'Weekly Off') : ((r.in || r.out) ? 'Present' : '')));
         if (idx.extraBreakMinutes !== undefined && calcExtra>0 && (row[idx.extraBreakMinutes] === '' || row[idx.extraBreakMinutes] === null || row[idx.extraBreakMinutes] === undefined || Number(row[idx.extraBreakMinutes])===0)) { row[idx.extraBreakMinutes]=calcExtra; changed=true; }
         if (idx.approveStatus !== undefined && r.approveStatus === 'Approve' && String(row[idx.approveStatus]||'').trim().toUpperCase() !== 'APPROVE') { row[idx.approveStatus]='Approve'; changed=true; }
         else fillBlank('approveStatus', r.approveStatus);
@@ -926,6 +929,7 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
   if(finalIn&&finalOut) patch.officeMinutes=calculateDutyMinutes_(finalIn,finalOut,Object.assign({},existing,patch));
   patch.updatedAt=new Date();
   updateByKey_(sh,'date',date,patch);
+  markSync_(user.username,'ATTENDANCE');
   appendActivity_(f,user,'Attendance',`Attendance saved for ${date}`);
   const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||''))&&String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});
   notifyUsers_(admins,'Attendance Updated',`${user.name} (${user.employeeId}) ne ${date} ki attendance update ki hai.`,'ATTENDANCE');
@@ -944,8 +948,7 @@ function punch_(s,type,dateStr,timeStr) {
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
   ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1Type','break1NamazType','break1Start','break1End','break1Reason','break2Type','break2NamazType','break2Start','break2End','break2Reason','break3Type','break3NamazType','break3Start','break3End','break3Reason','status','approveStatus','updatedAt']);
-  const rows=readRows_(sh);
-  let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
+  let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
   // Robustly handle a newly created attendance row. Do not assume that a
   // second read will immediately return the row; this was causing
@@ -1027,16 +1030,35 @@ function normalizeTime_(value){
   return String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0')+':'+String(sec).padStart(2,'0');
 }
 
+function safeFiniteNumber_(value, fallback){
+  const n=Number(value);
+  return Number.isFinite(n) ? n : (fallback===undefined ? 0 : fallback);
+}
+function syncCursorFromRows_(rows){
+  let max=0;
+  (rows||[]).forEach(function(r){
+    const t=new Date(String(r.updatedAt||'')).getTime();
+    if(Number.isFinite(t) && t>max) max=t;
+  });
+  return max ? new Date(max).toISOString() : new Date().toISOString();
+}
+function markSync_(username,module){
+  try{
+    PropertiesService.getScriptProperties().setProperty('OTR_SYNC_'+String(module||'ALL')+'_'+String(username||''),new Date().toISOString());
+  }catch(e){}
+}
+
 function tasks_(s,month,year,since) {
   const user=findUser_(s.username), rows=readRows_(getEmployeeFile_(user).getSheetByName('Tasks'));
   const m=month?Number(month):0, y=year?Number(year):0;
   const filtered=(m&&y)?rows.filter(r=>{const d=normalizeAttendanceDate_(r.date);return d&&Number(d.slice(5,7))===m&&Number(d.slice(0,4))===y;}):rows;
+  const cursor=syncCursorFromRows_(filtered);
   let out=filtered;
   if(since){
     const sd=new Date(String(since));
     if(!isNaN(sd.getTime())) out=filtered.filter(r=>{const u=new Date(String(r.updatedAt||''));return !isNaN(u.getTime())&&u.getTime()>sd.getTime();});
   }
-  return {rows:out.slice().reverse(),incremental:!!since,month:m||null,year:y||null,syncAt:new Date().toISOString()};
+  return {rows:out.slice().reverse(),incremental:!!since,month:m||null,year:y||null,syncAt:cursor,syncCursor:cursor,serverTime:new Date().toISOString()};
 }
 
 function taskAction_(s,id,type,progress,note,minutes) {
@@ -1049,12 +1071,20 @@ function taskAction_(s,id,type,progress,note,minutes) {
   else if(action==='COMPLETE') {
     const actual=row.startTime?Math.max(0,Math.round((now-new Date(row.startTime))/60000)):Number(row.actualMinutes||0);
     updateByKey_(sh,'id',id,{status:'COMPLETED',completedTime:time,actualMinutes:actual,progress:100,updatedAt:now});
+  } else if(action==='SAVE_TIME') {
+    const n=Number(minutes||0); if(!Number.isFinite(n)||n<=0||n>1440) throw new Error('Valid task minutes add karein (1-1440).');
+    const total=Number(row.actualMinutes||0)+Math.round(n);
+    const endDate=normalizeAttendanceDate_(row.assignmentTo||row.due||row.date)||normalizeAttendanceDate_(row.due||row.date);
+    const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+    const finished=endDate && today>=endDate;
+    updateByKey_(sh,'id',id,{status:finished?'COMPLETED':'IN_PROGRESS',actualMinutes:total,progress:finished?100:Number(row.progress||0),completedTime:finished?time:(row.completedTime||''),updatedAt:now});
   } else if(action==='CANCEL') updateByKey_(sh,'id',id,{status:'CANCELLED',updatedAt:now});
   else if(action==='PAUSE') updateByKey_(sh,'id',id,{status:'ON_HOLD',updatedAt:now});
   else if(action==='RESUME') updateByKey_(sh,'id',id,{status:'IN_PROGRESS',updatedAt:now});
   else if(action==='PROGRESS') taskProgress_(s,id,progress,note);
   else throw new Error('Unsupported task action.');
   appendActivity_(f,user,'Task',`${action} · ${row.name}`+(note?` · ${note}`:''));
+  markSync_(user.username,'TASKS');
   audit_(s,'UPDATE','TASK',`${action} / ${row.name}`);
   return {};
 }
@@ -1072,8 +1102,9 @@ function assignTask_(s,t) {
   appendObject_(sh,{id:taskId,date:date,name:String(t.name).trim(),details:t.details||'',category:t.category||'',priority:t.priority||'Normal',due:due,status:'ASSIGNED',startTime:'',completedTime:'',actualMinutes:0,expectedMinutes:Number(t.expectedMinutes||0)||'',progress:0,progressNote:'',assignedBy:s.username,assignedAt:new Date(),updatedAt:new Date()});
   appendActivity_(file,user,'Task Assigned',`${t.name} · due ${due}`);
   notifyUsers_([user.username],'New Task Assigned',`${t.name} task aapko ${s.name||s.username} ne assign ki hai. Due: ${due}.`,'TASK');
+  markSync_(user.username,'TASKS');
   audit_(s,'ASSIGN','TASK',`${t.name} → ${user.name}`);
-  return {taskId};
+  return {taskId,syncCursor:new Date().toISOString()};
 }
 
 function taskProgress_(s,id,progress,note) {
@@ -1082,6 +1113,7 @@ function taskProgress_(s,id,progress,note) {
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id)); if(!row) throw new Error('Task not found.');
   const status=n>=100?'COMPLETED':(n>0?'IN_PROGRESS':(row.status||'ASSIGNED'));
   updateByKey_(sh,'id',id,{progress:n,progressNote:String(note||''),status:status,updatedAt:new Date(),completedTime:n>=100?formatDateTime_(new Date()):row.completedTime||''});
+  markSync_(user.username,'TASKS');
   audit_(s,'UPDATE','TASK_PROGRESS',`${row.name} = ${n}%`);
   return {progress:n,status:status};
 }
@@ -1094,6 +1126,7 @@ function taskTime_(s,id,type,minutes) {
   updateByKey_(sh,'id',id,{actualMinutes:total,updatedAt:new Date()});
   const tSh=f.getSheetByName('TaskTime'); ensureHeaderColumns_(tSh,['taskId','date','start','end','minutes','type']);
   appendObject_(tSh,{taskId:id,date:Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'),start:formatDateTime_(new Date()),end:'',minutes:n,type:type||'MANUAL'});
+  markSync_(user.username,'TASKS');
   audit_(s,'UPDATE','TASK_TIME',`${row.name} +${n} min`);
   return {actualMinutes:total};
 }
@@ -1192,8 +1225,9 @@ function assignTemplate_(s,templateId,username,month,year,fromDay,toDay) {
   }
   appendActivity_(file,user,'Task Assigned',`${t.name} · ${y}-${String(m).padStart(2,'0')} · ${from}-${safeTo}`);
   notifyUsers_([user.username],'New Monthly Task Assigned',`${t.name} task ${String(from).padStart(2,'0')}-${String(safeTo).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y} ke liye assign ki gayi hai.`,'TASK');
+  markSync_(user.username,'TASKS');
   audit_(s,'ASSIGN','TEMPLATE',`${t.name} → ${user.name} (${username}) · ${m}/${y} · ${from}-${safeTo}`);
-  return {count:tasks.length,username:user.username,name:user.name,fromDay:from,toDay:safeTo,month:m,year:y};
+  return {count:tasks.length,username:user.username,name:user.name,fromDay:from,toDay:safeTo,month:m,year:y,syncCursor:new Date().toISOString()};
 }
 
 function employees_(s) {
@@ -1376,8 +1410,7 @@ function advancedReports_(s,range){
     ar.forEach(function(r){
       const d=normalizeAttendanceDate_(r.date); if(!d||d<cutoff||d>end)return;
       const status=normalizeAttendanceStatus_(r.status||'');
-      if(status==='Present')present++; else if(status==='Leave')leave++; else if(status==='Holiday')holiday++; else if(status==='Weekly Off')weekoff++; else if(status==='Absent')absent++; else attendanceSummary.Other++;
-      if(attendanceSummary[status]!==undefined) attendanceSummary[status]++;
+      if(status==='Present'){present++; attendanceSummary.Present++;} else if(status==='Leave'){leave++; attendanceSummary.Leave++;} else if(status==='Holiday'){holiday++; attendanceSummary.Holiday++;} else if(status==='Weekly Off'){weekoff++; attendanceSummary['Weekly Off']++;} else if(status==='Absent'){absent++; attendanceSummary.Absent++;} else {attendanceSummary.Other++;}
       const bm=Number(r.breakMinutes||calculateBreakMinutesFromRow_(r)||0); const xb=Number(r.extraBreakMinutes||calculateExtraBreakMinutesFromRow_(r)||0); breakM+=bm; extraBreakM+=xb;
       for(let i=1;i<=3;i++){
         const type=String(r[`break${i}Type`]||'').trim(), namaz=String(r[`break${i}NamazType`]||'').trim();
@@ -1628,7 +1661,7 @@ function employeeProfile_(s,username){
   const u=findUser_(username); if(!u) throw new Error('Employee not found.');
   const st=employeeSettings_(u);
   const ph=getStoredPhoto_(u.employeeId);
-  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,email:st.email||'',whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
 }
 
 function weekDayName_(day){
@@ -1684,7 +1717,24 @@ function profile_(s){
   const u=findUser_(s.username); if(!u) throw new Error('User not found.');
   const st=employeeSettings_(u);
   const ph=getStoredPhoto_(u.employeeId);
-  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
+  return {profile:{name:u.name,employeeId:u.employeeId,username:u.username,role:u.role,department:u.department,designation:u.designation,phone:u.phone,email:st.email||'',whatsapp:u.whatsapp,officeCity:st.officeCity||u.office||'',officeAddress:st.officeAddress||u.address||'',officeInTime:st.officeInTime||'',officeOutTime:st.officeOutTime||'',weekoffDay:String(st.weekoffDay??''),weekoffLabel:weekDayName_(st.weekoffDay),photoUrl:ph.photoUrl,photoDataUrl:ph.photoDataUrl,photoPath:ph.photoPath}};
+}
+
+function profileUpdate_(s,p){
+  const u=findUser_(s.username); if(!u) throw new Error('User not found.');
+  p=p||{};
+  const phone=String(p.phone!==undefined?p.phone:u.phone||'').trim();
+  const email=String(p.email!==undefined?p.email:'').trim();
+  if(p.phone===undefined && p.email===undefined) throw new Error('Profile mein Mobile Number ya Email Id update karein.');
+  const usersSh=master_().getSheetByName('Users');
+  if(p.phone!==undefined) updateByKey_(usersSh,'username',u.username,{phone:phone,updatedAt:new Date()});
+  const sh=master_().getSheetByName('EmployeeSettings');
+  ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt']);
+  const existing=readRows_(sh).find(function(r){return String(r.employeeId)===String(u.employeeId);});
+  if(existing) updateByKey_(sh,'employeeId',u.employeeId,{email:email,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,email:email,updatedAt:new Date()});
+  invalidateUsersCache_();
+  audit_(s,'UPDATE','PROFILE','Employee updated own mobile/email');
+  return {success:true};
 }
 
 function changePassword_(s,currentPassword,newPassword){
@@ -1698,15 +1748,16 @@ function changePassword_(s,currentPassword,newPassword){
 }
 
 function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
-  const target=findUser_(targetUsername); if(!target) throw new Error('Employee not found.');
-  return uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType);
+  const target=findUser_(targetUsername||s.username); if(!target) throw new Error('Employee not found.');
+  if(!['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role)) && String(target.username)!==String(s.username)) throw new Error('Aap sirf apni profile photo update kar sakte hain.');
+  return uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,true);
 }
 
 // Shared Admin/Master Admin photo uploader. Keeping the actual upload logic here
 // also lets User Create/Update save the photo in the same request, avoiding a
 // second API action that can fail when an older Worker/Apps Script deployment is live.
-function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType){
-  assertAdmin_(s);
+function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,allowSelf){
+  if(!allowSelf || !['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role))){ assertAdmin_(s); } else if(String(target.username)!==String(s.username) && !['MASTER_ADMIN','ADMIN','HOD'].includes(String(s.role))){ throw new Error('Access denied.'); }
   if(!target || !target.employeeId) throw new Error('Employee Id is required for profile photo.');
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
   const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/);
