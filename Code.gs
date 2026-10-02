@@ -774,21 +774,27 @@ function punch_(s,type,dateStr,timeStr) {
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
-  const rows=readRows_(sh); let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
+  const rows=readRows_(sh);
+  let existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
+
+  // Robustly handle a newly created attendance row. Do not assume that a
+  // second read will immediately return the row; this was causing
+  // "Cannot read properties of undefined (reading 'in')" during Save.
   if(!existing){
     appendObject_(sh,{date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT'});
-    existing=readRows_(sh).find(r=>normalizeAttendanceDate_(r.date)===date);
+    existing={date:date,in:'',out:'',officeMinutes:0,breakMinutes:0,status:'PRESENT'};
   }
+
   if(type==='IN'){
     if(existing.out && minutesBetween_(tm,existing.out)<=0) throw new Error('IN Time, existing OUT Time se pehle hona chahiye.');
     const patch={in:tm,status:'PRESENT'};
     if(existing.out) patch.officeMinutes=minutesBetween_(tm,existing.out);
-    updateByKey_(sh,'date',existing.date,patch);
+    updateByKey_(sh,'date',date,patch);
   } else {
-    if(!existing.in) throw new Error('Pehle IN Time enter karein.');
+    if(!existing || !existing.in) throw new Error('Pehle IN Time enter karein.');
     const officeMinutes=minutesBetween_(existing.in,tm);
     if(officeMinutes<=0) throw new Error('OUT Time, IN Time ke baad hona chahiye.');
-    updateByKey_(sh,'date',existing.date,{out:tm,officeMinutes:officeMinutes,status:'PRESENT'});
+    updateByKey_(sh,'date',date,{out:tm,officeMinutes:officeMinutes,status:'PRESENT'});
   }
   appendActivity_(f,user,'Attendance',`${type} time manually recorded for ${date}`);
   const admins=readUsersCached_().filter(function(x){return ['MASTER_ADMIN','ADMIN','HOD'].includes(String(x.role||'')) && String(x.status||'ACTIVE')==='ACTIVE';}).map(function(x){return x.username;});

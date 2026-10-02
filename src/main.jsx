@@ -227,11 +227,14 @@ function Attendance({session,notify}) {
     if(!attendanceDate){notify("error","Attendance date select karein.");return;}
     if(!inTime && !outTime){notify("error","IN Time ya OUT Time enter karein.");return;}
     try{
+      // Save IN first and OUT second so existing server-side validation remains intact.
       if(inTime) await api("punch",{session,type:"IN",date:attendanceDate,time:inTime});
       if(outTime) await api("punch",{session,type:"OUT",date:attendanceDate,time:outTime});
       notify("success","Attendance time save ho gaya.");
       await load();
-    }catch(e){notify("error",e.message)}
+    }catch(e){
+      notify("error", e?.message || "Attendance save nahi ho saki. Please dobara try karein.");
+    }
   };
 
   const downloadFormat=(type)=>{
