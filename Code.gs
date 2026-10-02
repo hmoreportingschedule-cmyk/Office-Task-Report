@@ -973,7 +973,7 @@ function employees_(s) {
     };
   }).map(function(row){
     const u=findUser_(row.username); const st=employeeSettings_(u);
-    row.officeInTime=st.officeInTime||''; row.officeOutTime=st.officeOutTime||''; row.weekoffDay=st.weekoffDay; row.weekoffLabel=weekDayName_(st.weekoffDay);
+    row.officeInTime=st.officeInTime||u.officeInTime||row.officeInTime||''; row.officeOutTime=st.officeOutTime||u.officeOutTime||row.officeOutTime||''; row.weekoffDay=(st.weekoffDay!==undefined&&st.weekoffDay!=='')?st.weekoffDay:(u.weekoffDay!==undefined?u.weekoffDay:row.weekoffDay); row.weekoffLabel=weekDayName_(row.weekoffDay);
     return row;
   })};
 }
@@ -1363,7 +1363,7 @@ function changePassword_(s,currentPassword,newPassword){
 
 function uploadProfilePhoto_(s,targetUsername,fileName,dataUrl,mimeType){
   // Employee photos are managed from the Admin Users/Profile screen only.
-  assertMasterAdmin_(s);
+  assertAdmin_(s);
   const target=findUser_(targetUsername); if(!target) throw new Error('Employee not found.');
   if(!dataUrl || !String(dataUrl).startsWith('data:')) throw new Error('Valid photo file required.');
   const match=String(dataUrl).match(/^data:([^;]+);base64,(.+)$/); if(!match) throw new Error('Invalid photo data.');
