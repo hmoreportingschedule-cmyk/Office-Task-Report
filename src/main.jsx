@@ -6,15 +6,20 @@ import {
   UserCircle2, AlertCircle, Check, X, Plus, RefreshCw, Upload, Download, FileSpreadsheet, Camera, KeyRound, StickyNote
 } from "lucide-react";
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
-import * as XLSX from "xlsx";
 import "./styles.css";
 
-// Office Task Report V.65
+// Office Task Report V.72
 // IMPORTANT: Browser -> Google Apps Script POST can hang/fail because the Apps
 // Script Web App redirects to googleusercontent.com and browser CORS handling
 // can block the response. V.30 sends requests through the same-origin Vercel
 // serverless proxy instead.
 const API_URL = "/api/office-task";
+
+let XLSX_MODULE=null;
+async function getXLSX(){
+  if(!XLSX_MODULE) const mod=await import("xlsx"); XLSX_MODULE=mod.default||mod;
+  return XLSX_MODULE;
+}
 
 async function api(action, payload = {}) {
   const controller = new AbortController();
@@ -280,8 +285,6 @@ function Attendance({session,notify}) {
       setBreaks(normalizeBreaksForForm(selected));
     }catch(e){if(seq===loadSeq.current) notify("error",e.message)}finally{if(seq===loadSeq.current)setBusy(false)}
   };
-  useEffect(()=>{load()},[]);
-
   const selectDate=(date)=>{
     setAttendanceDate(date);
     const row=(data?.rows||[]).find(x=>x.date===date);
@@ -290,7 +293,7 @@ function Attendance({session,notify}) {
     setBreaks(normalizeBreaksForForm(row));
   };
 
-  useEffect(()=>{load()},[reportMonth,reportYear]);
+  useEffect(()=>{load(); const t=setInterval(()=>load(),10000); return()=>clearInterval(t)},[reportMonth,reportYear,session.username]);
 
   const saveManualAttendance=async()=>{
     if(!attendanceDate){notify("error","Attendance date select karein.");return;}
@@ -306,7 +309,7 @@ function Attendance({session,notify}) {
     }finally{setBusy(false);}
   };
 
-  const downloadFormat=(type)=>{
+  const downloadFormat=async(type)=>{
     const headers=["Employee Id","Date","In Time","Out Time","Status","Approve/Not Approve"];
     const sample=[[session.code||"12345",attendanceDate||new Date().toISOString().slice(0,10),"09:30 AM","07:00 PM","Present","Approve"]];
     if(type==="csv"){
@@ -314,7 +317,7 @@ function Attendance({session,notify}) {
       const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const a=document.createElement("a");
       a.href=url;a.download="Employee_Attendance_Import_Format.csv";a.click();URL.revokeObjectURL(url);return;
     }
-    const ws=XLSX.utils.aoa_to_sheet([headers,...sample]); ws["!cols"]=[{wch:16},{wch:14},{wch:12},{wch:12},{wch:18},{wch:16},{wch:14}];
+    const XLSX=await getXLSX(); const ws=XLSX.utils.aoa_to_sheet([headers,...sample]); ws["!cols"]=[{wch:16},{wch:14},{wch:12},{wch:12},{wch:18},{wch:16},{wch:14}];
     const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Attendance"); XLSX.writeFile(wb,"Employee_Attendance_Import_Format.xlsx");
   };
 
@@ -322,7 +325,7 @@ function Attendance({session,notify}) {
     const file=e.target.files?.[0]; if(!file)return;
     setImportResult(null); setImportBusy(true);
     try{
-      const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:"array",cellDates:true});
+      const XLSX=await getXLSX(); const buf=await file.arrayBuffer(); const wb=XLSX.read(buf,{type:"array",cellDates:true});
       const sheet=wb.Sheets[wb.SheetNames[0]]; const rows=XLSX.utils.sheet_to_json(sheet,{defval:"",raw:false});
       if(!rows.length)throw new Error("Excel/CSV file mein koi record nahi mila.");
       const preview=await api("previewAttendanceImport",{session,rows}); setImportPreview(preview);
@@ -424,7 +427,7 @@ function Tasks({session,notify}) {
   const [rows,setRows]=useState([]), [busy,setBusy]=useState(true), [search,setSearch]=useState("");
   const nowTask=new Date(); const [taskMonth,setTaskMonth]=useState(String(nowTask.getMonth()+1).padStart(2,"0")); const [taskYear,setTaskYear]=useState(String(nowTask.getFullYear()));
   const load=async()=>{setBusy(true);try{const syncKey=`otr_tasks_${session.username}_${taskYear}_${taskMonth}`;const since=localStorage.getItem(syncKey)||"";const r=await api("tasks",{session,month:taskMonth,year:taskYear,since});let merged=r.rows||[];if(r.incremental){try{const cached=JSON.parse(localStorage.getItem(`${syncKey}_rows`)||"[]");const byId=new Map(cached.map(x=>[String(x.id),x]));(r.rows||[]).forEach(x=>byId.set(String(x.id),x));merged=Array.from(byId.values()).sort((a,b)=>String(b.date).localeCompare(String(a.date)));}catch(_e){}}setRows(merged);try{localStorage.setItem(`${syncKey}_rows`,JSON.stringify(merged));}catch(_e){}if(r.syncAt)localStorage.setItem(syncKey,r.syncAt)}catch(e){notify("error",e.message)}finally{setBusy(false)}};
-  useEffect(()=>{load()},[taskMonth,taskYear]);
+  useEffect(()=>{load(); const t=setInterval(()=>load(),10000); return()=>clearInterval(t)},[taskMonth,taskYear,session.username]);
   const action=async(id,type)=>{try{await api("taskAction",{session,taskId:id,type});notify("success",type==="START"?"Task started.":"Task updated.");load()}catch(e){notify("error",e.message)}};
   const saveMinutes=async(r)=>{const value=window.prompt(`Task "${r.name}" ke liye kitne minutes lage?`,"");if(value===null)return;const n=Number(value);if(!Number.isFinite(n)||n<=0){notify("error","Valid minutes add karein.");return}try{await api("taskAction",{session,taskId:r.id,type:"SAVE_TIME",minutes:n});notify("success",`${n} minutes save ho gaye.`);load()}catch(e){notify("error",e.message)}};
   const progress=async(r)=>{const value=window.prompt(`Progress % for ${r.name}`,String(r.progress||0));if(value===null)return;const note=window.prompt("Progress note (optional)",String(r.progressNote||""));try{await api("taskProgress",{session,taskId:r.id,progress:Number(value),note:note||""});notify("success","Task progress updated.");load()}catch(e){notify("error",e.message)}};
@@ -667,7 +670,7 @@ function Reports({session,notify}) {
   const load=async()=>{setBusy(true);try{const [r,a]=await Promise.all([api("reports",{session,range}),api("advancedReports",{session,range})]);setData(r);setAdvanced(a)}catch(e){notify("error",e.message)}finally{setBusy(false)}};
   useEffect(()=>{load()},[range]);
   const downloadCSV=async()=>{try{const r=await api("exportReport",{session,format:"CSV",range});const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([r.content],{type:"text/csv;charset=utf-8"}));a.download=r.fileName;a.click();}catch(e){notify("error",e.message)}};
-  const downloadExcel=async()=>{try{const r=await api("exportReport",{session,format:"XLSX",range});const ws=XLSX.utils.aoa_to_sheet(r.rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Report");XLSX.writeFile(wb,r.fileName)}catch(e){notify("error",e.message)}};
+  const downloadExcel=async()=>{try{const XLSX=await getXLSX();const r=await api("exportReport",{session,format:"XLSX",range});const ws=XLSX.utils.aoa_to_sheet(r.rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Report");XLSX.writeFile(wb,r.fileName)}catch(e){notify("error",e.message)}};
   const printPDF=()=>window.print();
   return <div><PageHead title="Reports & Analytics" subtitle="Role-based employee progress, attendance and task analytics." action={<div className="table-actions"><select value={range} onChange={e=>setRange(e.target.value)}><option value="month">This Month</option><option value="year">This Year</option><option value="all">All Data</option></select><button className="secondary" onClick={downloadCSV}><Download size={15}/> CSV</button><button className="secondary" onClick={downloadExcel}><FileSpreadsheet size={15}/> Excel</button><button className="secondary" onClick={printPDF}><FileText size={15}/> PDF</button></div>}/>
     {busy&&!data?<Loader/>:<><div className="kpi-grid"><Kpi label="Employees" value={data?.employees||0}/><Kpi label="Tasks" value={data?.tasks||0}/><Kpi label="Completed" value={data?.completed||0}/><Kpi label="Pending" value={data?.pending||0}/><Kpi label="Present Today" value={data?.present||0}/></div>
