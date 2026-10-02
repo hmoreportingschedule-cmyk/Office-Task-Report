@@ -1,22 +1,17 @@
-# Office Task Report — V.83 Full Reviewed Stable Build
+# Office Task Report V.85
 
-Complete Cloudflare Workers + Google Apps Script project.
+Full deep-reviewed build for Cloudflare Workers + Google Apps Script + Google Sheets/Drive.
 
 ## Cloudflare
-- Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
-- Root directory: `/`
+- Root: `/`
+- Build: `npm run build`
+- Deploy: `npx wrangler deploy`
 
-The build runs a prebuild regression check before Vite. It checks required files, frontend/backend API action parity, the known JSX declaration failure, XLSX import mode, Wrangler assets, and Apps Script redirect handling.
+## Apps Script
+Replace the existing root `Code.gs` in the existing Apps Script project with this build's `Code.gs`, then deploy a new Web App version.
 
-## Backend
-Deploy the root `Code.gs` in the existing Google Apps Script Web App project. Keep the existing `/exec` deployment URL configured in `worker.js`.
+Execute as: Me
+Who has access: Anyone
 
-## Drive
-`My Drive / Dashboard Working / office-task-report / Employees Task Files`
-
-`My Drive / Dashboard Working / office-task-report / Employees Photo`
-
-Employee yearly files: `Name_EmployeeId_Year` with only `Profile`, `Attendance`, `Tasks`, `Requests`, `Activities`.
-
-Master spreadsheet: `office-task-report`; Users remains the finalized A:S schema.
+## Important
+Use this V.85 project as a complete replacement. Do not mix V.76-V.83 files into it.

@@ -35,7 +35,7 @@
 @media(max-width:620px){.template-period{grid-template-columns:1fr 1fr}.period-arrow{display:none}}
 .compact-form{gap:10px}.assign-note{display:flex;align-items:center;gap:7px;background:#f0faf8;border:1px solid #d8eee9;color:#52716d;border-radius:10px;padding:10px 12px;font-size:11px}.section-divider{height:1px;background:var(--border);margin:20px 0}.location-heading{font-size:12px;font-weight:800;color:#0f766e;background:#f0faf8;border:1px solid #d8eee9;border-radius:10px;padding:10px 12px}.form-grid .location-heading{grid-column:1/-1}
 
-/* V.18 Attendance Import */
+/* V.85 Attendance Import */
 .top-actions-inline{display:flex;align-items:center;gap:8px}
 .attendance-import-panel{margin-bottom:18px}
 .import-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}
@@ -50,7 +50,7 @@
 .import-errors{margin-top:9px;padding:9px 12px;border-radius:10px;background:#fff7f7;border:1px solid #f0d6d6;color:#a34747;font-size:11px;max-height:120px;overflow:auto}
 @media(max-width:720px){.import-actions{width:100%}.import-actions button,.import-actions .upload-btn{flex:1;justify-content:center}.import-help{width:100%}}
 
-/* V.39 profile + fast notification UI */
+/* V.85 profile + fast notification UI */
 .profile-card .profile-head{display:flex;align-items:center;gap:18px;margin-bottom:22px}
 .profile-photo{width:88px;height:88px;border-radius:50%;border:1px solid var(--border,#dfe7e5);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;background:#f3f7f6}
 .profile-photo img{width:100%;height:100%;object-fit:cover}
@@ -69,7 +69,7 @@
 .profile-note{display:block;margin-top:7px;color:#6b7f7a;font-size:11px}
 .admin-photo-upload{box-shadow:0 1px 4px rgba(15,118,110,.22)}
 
-/* V.54 Attendance two-part layout + fast sync */
+/* V.85 Attendance two-part layout + fast sync */
 .attendance-two-part{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:18px;align-items:start}.attendance-two-part .panel{min-width:0}.recent-attendance-panel{overflow:hidden}.recent-attendance-panel .table-wrap{max-height:420px;overflow:auto}.recent-attendance-panel table{min-width:640px}@media(max-width:900px){.attendance-two-part{grid-template-columns:1fr}}
 
 .admin-photo-field{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px;border:1px solid #dce7e5;border-radius:12px;background:#f8fbfa}.admin-photo-field input{max-width:100%}.admin-photo-field small{width:100%;color:#6b7f7a;font-size:11px}.admin-photo-preview{width:44px;height:44px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#eef7f5;color:#0f766e;border:1px solid #dce7e5}.admin-photo-preview img{width:100%;height:100%;object-fit:cover}
@@ -77,7 +77,7 @@
 .break-section{border:1px solid #dbe7e5;border-radius:14px;padding:14px;background:#f8fbfb}.break-section-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.break-section-head small{display:block;color:#6b7b86;margin-top:3px}.break-card{display:grid;grid-template-columns:110px 1.2fr 1fr 1fr 1fr;gap:10px;align-items:end;padding:10px 0;border-top:1px solid #e7eeee}.break-title{font-weight:700;color:#123}.break-card label{margin:0}.notes-list{display:flex;flex-direction:column;gap:10px}.note-item{border:1px solid #dfe9e7;border-radius:12px;padding:12px;background:#fbfdfd}.note-meta{display:flex;gap:16px;font-size:12px;color:#6b7b86;margin-bottom:6px}.note-text{white-space:pre-wrap;line-height:1.5;color:#17252d}.notes-layout{align-items:start}
 @media(max-width:900px){.break-card{grid-template-columns:1fr 1fr}.break-title{grid-column:1/-1}.break-section-head{flex-direction:column;align-items:flex-start}}
 
-/* V.62 task filters and break report */
+/* V.85 task filters and break report */
 .task-filter-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.task-filter-bar select{min-width:105px}.break-alert{font-weight:700}
 @media(max-width:620px){.task-filter-bar{width:100%}.task-filter-bar select{flex:1;min-width:0}.task-filter-bar .search{width:100%}}
 

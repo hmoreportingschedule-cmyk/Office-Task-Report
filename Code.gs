@@ -1,5 +1,5 @@
 /**
- * OFFICE TASK REPORT V.83
+ * OFFICE TASK REPORT V.85
  * Google Apps Script backend
  *
  * Architecture:
@@ -26,17 +26,17 @@ function doGet(e) {
     const action = e && e.parameter ? String(e.parameter.action || '').trim().toLowerCase() : '';
     if (action === 'health') {
       const status = ensureBackend_();
-      return json_({ok:true,app:'Office Task Report',version:'V.83',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
+      return json_({ok:true,app:'Office Task Report',version:'V.85',ready:true,message:'Backend ready.',masterId:status.masterId,usersSheetUrl:status.usersSheetUrl,time:new Date().toISOString()});
     }
     return json_({
       ok:true,
       app:'Office Task Report',
-      version:'V.83',
+      version:'V.85',
       message:'Office Task Report API is running.',
       time:new Date().toISOString()
     });
   } catch(err) {
-    return json_({ok:false,app:'Office Task Report',version:'V.83',message:String(err.message || err),time:new Date().toISOString()});
+    return json_({ok:false,app:'Office Task Report',version:'V.85',message:String(err.message || err),time:new Date().toISOString()});
   }
 }
 
@@ -391,10 +391,10 @@ function route_(action,b) {
     case 'noteSave': return saveNote_(b.session,b.note);
     case 'save_note': return saveNote_(b.session,b.note);
     case 'tasks': return tasks_(b.session,b.month,b.year,b.since);
-    case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes);
+    case 'taskAction': return taskAction_(b.session,b.taskId,b.type,b.progress,b.note,b.minutes,b.year);
     case 'assignTask': return assignTask_(b.session,b.task);
-    case 'taskProgress': return taskProgress_(b.session,b.taskId,b.progress,b.note);
-    case 'taskTime': return taskTime_(b.session,b.taskId,b.type,b.minutes);
+    case 'taskProgress': return taskProgress_(b.session,b.taskId,b.progress,b.note,b.year);
+    case 'taskTime': return taskTime_(b.session,b.taskId,b.type,b.minutes,b.year);
     case 'templates': return templates_(b.session);
     case 'createTemplate': return createTemplate_(b.session,b.template);
     case 'updateTemplate': return updateTemplate_(b.session,b.template);
@@ -622,7 +622,9 @@ function dashboard_(s) {
 function invalidateDashboardCache_(username){try{CacheService.getScriptCache().remove('OTR_DASH_'+String(username||''));}catch(e){}}
 
 function attendance_(s,month,year,since) {
-  const user=findUser_(s.username), f=getEmployeeFile_(user), attSh=f.getSheetByName('Attendance');
+  const user=findUser_(s.username);
+  const selectedYearForFile=year?Number(year):Number(Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy'));
+  const f=getEmployeeFile_(user, selectedYearForFile), attSh=f.getSheetByName('Attendance');
   ensureHeaderColumns_(attSh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
   const version=PropertiesService.getScriptProperties().getProperty('OTR_SYNCVER_ATTENDANCE_'+String(user.username))||'';
   const selectedMonthCache=month?Number(month):Number(Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'MM'));
@@ -731,8 +733,10 @@ function importAttendance_(s, inputRows) {
       const user = byCode[String(r.employeeCode).trim()];
       if (!user) { errors.push(`Row ${idx+2}: Employee Id ${r.employeeCode} not found.`); return; }
       valid++;
-      const key = String(r.employeeCode).trim();
-      if (!groups[key]) groups[key] = {user:user, rows:[]};
+      const rowYear=Number(String(r.date||'').slice(0,4));
+      if(!Number.isInteger(rowYear)||rowYear<2020||rowYear>2100){ errors.push(`Row ${idx+2}: Invalid attendance year.`); return; }
+      const key = String(r.employeeCode).trim()+'|'+rowYear;
+      if (!groups[key]) groups[key] = {user:user, year:rowYear, rows:[]};
       groups[key].rows.push(r);
     });
 
@@ -802,7 +806,7 @@ function importAttendance_(s, inputRows) {
       }
     });
 
-    const affected=Object.keys(groups).map(function(code){return groups[code].user.username;});
+    const affected=[...new Set(Object.keys(groups).map(function(code){return groups[code].user.username;}))];
     if(affected.length) notifyUsers_(affected,'Attendance Imported','Admin ne attendance file import ki hai. Aapki attendance turant update kar di gayi hai.','ATTENDANCE');
     audit_(s,'IMPORT','ATTENDANCE',`Rows ${valid}, Added ${added}, Updated blank fields ${updated}, Skipped ${skipped}`);
     return {added:added, updated:updated, skipped:skipped, errors:errors.slice(0,100), total:inputRows.length};
@@ -929,15 +933,16 @@ function normalizeAttendanceDate_(v) {
 }
 
 function saveAttendance_(s,dateStr,inTime,outTime,breaks){
-  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
+  const user=findUser_(s.username);
   const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   const date=normalizeAttendanceDate_(dateStr||todayStr);
   if(!date) throw new Error('Valid attendance date select karein.');
+  const f=getEmployeeFileForDate_(user,date), sh=f.getSheetByName('Attendance');
   if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const d=new Date(todayStr+'T00:00:00'); const minDate=new Date(d); minDate.setDate(minDate.getDate()-2);
   const minStr=Utilities.formatDate(minDate,Session.getScriptTimeZone(),'yyyy-MM-dd');
   if(date<minStr) throw new Error('Filhal sirf aaj aur previous 2 days ki attendance allowed hai.');
-  const rules=getAttendanceRules_(user);
+  const rules=getAttendanceRules_(user,date);
   if(isNonWorkingDate_(date,rules)) throw new Error((rules.reasonMap[date]||'Weekoff / Leave / Adjustment')+' hai. Attendance required nahi hai.');
   const tmIn=normalizeTime_(inTime), tmOut=normalizeTime_(outTime);
   if(!tmIn && !tmOut) throw new Error('IN Time ya OUT Time enter karein.');
@@ -993,16 +998,17 @@ function saveAttendance_(s,dateStr,inTime,outTime,breaks){
 }
 
 function punch_(s,type,dateStr,timeStr) {
-  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
+  const user=findUser_(s.username);
   const today=new Date(), todayStr=Utilities.formatDate(today,Session.getScriptTimeZone(),'yyyy-MM-dd');
   const date=normalizeAttendanceDate_(dateStr || todayStr);
   if(!date) throw new Error('Valid attendance date select karein.');
   if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
-  const rules=getAttendanceRules_(user);
+  const rules=getAttendanceRules_(user,date);
   if(isNonWorkingDate_(date,rules)) throw new Error((rules.reasonMap[date]||'Weekoff / Leave / Adjustment')+' hai. Attendance required nahi hai.');
   if(!['IN','OUT'].includes(String(type))) throw new Error('Invalid attendance action.');
   const tm=normalizeTime_(timeStr);
   if(!tm) throw new Error('Valid time select karein.');
+  const f=getEmployeeFileForDate_(user,date), sh=f.getSheetByName('Attendance');
   ensureHeaderColumns_(sh,['date','in','out','officeMinutes','breakMinutes','extraBreakMinutes','break1NamazType','break1Start','break1End','break2NamazType','break2Start','break2End','break3Start','break3End','status','approveStatus','approvedBy','approvedAt','updatedAt']);
   let rows=readRows_(sh), existing=rows.find(r=>normalizeAttendanceDate_(r.date)===date);
 
@@ -1032,8 +1038,9 @@ function punch_(s,type,dateStr,timeStr) {
 }
 
 function saveBreak_(s,dateStr,breakNo,breakType,namazType,startTime,endTime,reason){
-  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Attendance');
-  const date=normalizeAttendanceDate_(dateStr); if(!date) throw new Error('Valid attendance date select karein.');
+  const user=findUser_(s.username);
+  const date=normalizeAttendanceDate_(dateStr);
+  const f=getEmployeeFileForDate_(user,date), sh=f.getSheetByName('Attendance'); if(!date) throw new Error('Valid attendance date select karein.');
   const todayStr=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'); if(date>todayStr) throw new Error('Future date ki attendance allowed nahi hai.');
   const n=Number(breakNo); if(![1,2,3].includes(n)) throw new Error('Maximum 3 breaks allowed hain.');
   const type=n===3?'Lunch':'Namaz';
@@ -1115,7 +1122,7 @@ function markSync_(username,module){
 function tasks_(s,month,year,since) {
   const user=findUser_(s.username);
   const m=month?Number(month):0, y=year?Number(year):0;
-  const file=getEmployeeFile_(user);
+  const file=getEmployeeFile_(user, y || new Date().getFullYear());
   const taskSheet=file.getSheetByName('Tasks');
   migrateTaskAssignmentsV74_(taskSheet);
   const version=PropertiesService.getScriptProperties().getProperty('OTR_SYNCVER_TASKS_'+String(user.username))||'';
@@ -1136,8 +1143,10 @@ function tasks_(s,month,year,since) {
   return {rows:out.slice().reverse(),incremental:!!since,month:m||null,year:y||null,syncAt:cursor,syncCursor:cursor,serverTime:new Date().toISOString()};
 }
 
-function taskAction_(s,id,type,progress,note,minutes) {
-  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Tasks');
+function taskAction_(s,id,type,progress,note,minutes,requestedYear) {
+  const user=findUser_(s.username);
+  const f=getEmployeeFile_(user, Number(requestedYear)||new Date().getFullYear());
+  const sh=f.getSheetByName('Tasks');
   migrateTaskAssignmentsV74_(sh);
   ensureHeaderColumns_(sh,['id','date','name','details','category','priority','due','status','startTime','completedTime','actualMinutes','progress','progressNote','assignedBy','assignedAt','updatedAt','assignmentMonth','assignmentYear','assignmentFrom','assignmentTo','assignmentKey','approvalStatus','approvedBy','approvedAt']);
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id));
@@ -1167,7 +1176,7 @@ function taskAction_(s,id,type,progress,note,minutes) {
   } else if(action==='CANCEL') updateByKey_(sh,'id',id,{status:'CANCELLED',updatedAt:now});
   else if(action==='PAUSE') updateByKey_(sh,'id',id,{status:'ON_HOLD',updatedAt:now});
   else if(action==='RESUME') updateByKey_(sh,'id',id,{status:'IN_PROGRESS',updatedAt:now});
-  else if(action==='PROGRESS') taskProgress_(s,id,progress,note);
+  else if(action==='PROGRESS') taskProgress_(s,id,progress,note,requestedYear);
   else throw new Error('Unsupported task action.');
   appendActivity_(f,user,'Task',`${action} · ${row.name}`+(note?` · ${note}`:''));
   markSync_(user.username,'TASKS');
@@ -1193,8 +1202,8 @@ function assignTask_(s,t) {
   return {taskId,syncCursor:new Date().toISOString()};
 }
 
-function taskProgress_(s,id,progress,note) {
-  const user=findUser_(s.username), sh=getEmployeeFile_(user).getSheetByName('Tasks');
+function taskProgress_(s,id,progress,note,requestedYear) {
+  const user=findUser_(s.username), sh=getEmployeeFile_(user,Number(requestedYear)||new Date().getFullYear()).getSheetByName('Tasks');
   const n=Number(progress); if(!Number.isFinite(n)||n<0||n>100) throw new Error('Progress 0 se 100 ke beech hona chahiye.');
   const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id)); if(!row) throw new Error('Task not found.');
   const endDate=normalizeAttendanceDate_(row.assignmentTo||row.due||row.date);
@@ -1207,14 +1216,22 @@ function taskProgress_(s,id,progress,note) {
   return {progress:n,status:status};
 }
 
-function taskTime_(s,id,type,minutes) {
-  const user=findUser_(s.username), f=getEmployeeFile_(user), sh=f.getSheetByName('Tasks');
-  const rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id)); if(!row) throw new Error('Task not found.');
-  const n=Number(minutes||0); if(!Number.isFinite(n)||n<0||n>1440) throw new Error('Invalid task minutes.');
-  const current=Number(row.actualMinutes||0), total=current+n;
+function taskTime_(s,id,type,minutes,requestedYear) {
+  const user=findUser_(s.username);
+  const f=getEmployeeFile_(user,Number(requestedYear)||new Date().getFullYear());
+  return taskTimeOnFile_(s,user,f,id,type,minutes);
+}
+function taskTimeOnFile_(s,user,f,id,type,minutes){
+  const sh=f.getSheetByName('Tasks'), rows=readRows_(sh), row=rows.find(r=>String(r.id)===String(id)); if(!row) throw new Error('Task not found.');
+  const n=Number(minutes||0); if(!Number.isFinite(n)||n<=0||n>1440) throw new Error('Invalid task minutes.');
+  const startDate=normalizeAttendanceDate_(row.assignmentFrom&&row.assignmentMonth&&row.assignmentYear?`${row.assignmentYear}-${String(row.assignmentMonth).padStart(2,'0')}-${String(row.assignmentFrom).padStart(2,'0')}`:(row.date||''));
+  const endDate=normalizeAttendanceDate_(row.assignmentTo&&row.assignmentMonth&&row.assignmentYear?`${row.assignmentYear}-${String(row.assignmentMonth).padStart(2,'0')}-${String(row.assignmentTo).padStart(2,'0')}`:(row.due||row.date||''));
+  const today=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+  if(startDate && today<startDate) throw new Error(`Task ${startDate} se pehle minutes save nahi kiye ja sakte.`);
+  if(endDate && today>endDate) throw new Error(`Task ${endDate} ke baad minutes save nahi kiye ja sakte.`);
+  if(['COMPLETED','CANCELLED'].includes(String(row.status||''))) throw new Error('Completed/Cancelled task mein additional minutes save nahi kiye ja sakte.');
+  const current=Number(row.actualMinutes||0), total=current+Math.round(n);
   updateByKey_(sh,'id',id,{actualMinutes:total,updatedAt:new Date()});
-  // Task minutes are stored in Tasks.actualMinutes; no separate TaskTime sheet is created.
-  const taskLogDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
   markSync_(user.username,'TASKS');
   audit_(s,'UPDATE','TASK_TIME',`${row.name} +${n} min`);
   return {actualMinutes:total};
@@ -1579,7 +1596,7 @@ function approvalAction_(s,id,status) {
   if(item.username && item.requestId){
     const u=findUser_(item.username);
     if(u){
-      const f=getEmployeeFile_(u), sh=f.getSheetByName('Requests'); try{updateByKey_(sh,'id',item.requestId,{status:status});}catch(e){}
+      const f=getEmployeeFileForDate_(u,item.date), sh=f.getSheetByName('Requests'); try{updateByKey_(sh,'id',item.requestId,{status:status});}catch(e){}
       if(String(status)==='APPROVED' && String(item.type)==='Time Adjustment' && item.adjustmentField && item.adjustmentTime){
         saveAttendanceRoster_(u,item.date,item.adjustmentField,item.adjustmentTime);
       }
@@ -1822,7 +1839,7 @@ function setRamadanBreakFreeze_(s,frozen){
 function createRequest_(s,r) {
   if(!r || !r.type || !r.date) throw new Error('Request type and date are required.');
   const user=findUser_(s.username); if(!user) throw new Error('User not found.');
-  const file=getEmployeeFile_(user), sh=file.getSheetByName('Requests'); ensureHeaderColumns_(sh,['id','type','date','details','startTime','endTime','meetingMode','adjustmentField','status','createdAt']);
+  const file=getEmployeeFileForDate_(user,normalizeAttendanceDate_(r.date)), sh=file.getSheetByName('Requests'); ensureHeaderColumns_(sh,['id','type','date','details','startTime','endTime','meetingMode','adjustmentField','status','createdAt']);
   const id=Utilities.getUuid(), date=normalizeAttendanceDate_(r.date); if(!date) throw new Error('Invalid request date.');
   const type=String(r.type);
   if(type==='Time Adjustment' && !['IN','OUT'].includes(String(r.adjustmentField||''))) throw new Error('Time Adjustment mein IN ya OUT select karein.');
@@ -1909,16 +1926,17 @@ function saveAttendanceRoster_(user,date,field,time){
   } else appendObject_(sh,obj);
 }
 
-function getAttendanceRules_(user){
+function getAttendanceRules_(user,targetDate){
   const globalRows=readRows_(master_().getSheetByName('SystemSettings')), gs={}; globalRows.forEach(function(r){gs[r.key]=r.value;});
   const st=employeeSettings_(user);
-  const rosterToday=getAttendanceRoster_(user,Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd'));
+  const rulesDate=normalizeAttendanceDate_(targetDate)||Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+  const rosterToday=getAttendanceRoster_(user,rulesDate);
   const weekoff=rosterToday&&rosterToday.weekoffDay!==''?rosterToday.weekoffDay:(st.weekoffDay!==''?st.weekoffDay:(gs.WEEKOFF_DAY||'0'));
   const reasonMap={};
   const h=master_().getSheetByName('Holidays');
   if(h) readRows_(h).forEach(function(r){const d=normalizeAttendanceDate_(r.date); if(d) reasonMap[d]='Holiday: '+String(r.name||'Holiday');});
   try{
-    const file=getEmployeeFile_(user), req=file.getSheetByName('Requests');
+    const file=getEmployeeFileForDate_(user,rulesDate), req=file.getSheetByName('Requests');
     if(req) readRows_(req).forEach(function(r){if(String(r.status)!=='APPROVED') return; const d=normalizeAttendanceDate_(r.date); if(!d)return; if(['Leave','Weekoff Adjustment'].includes(String(r.type))) reasonMap[d]=String(r.type);});
   }catch(e){}
   return {weekoff:String(weekoff),reasonMap:reasonMap};
@@ -1949,7 +1967,9 @@ function profileUpdate_(s,p){
   const sh=master_().getSheetByName('EmployeeSettings');
   ensureHeaderColumns_(sh,['employeeId','username','officeCity','officeAddress','officeInTime','officeOutTime','weekoffDay','photoUrl','photoFileId','photoPath','email','updatedAt']);
   const existing=readRows_(sh).find(function(r){return String(r.employeeId)===String(u.employeeId);});
-  if(existing) updateByKey_(sh,'employeeId',u.employeeId,{email:email,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,email:email,updatedAt:new Date()});
+  const existingEmail=existing&&existing.email?String(existing.email):'';
+  const finalEmail=p.email!==undefined?email:existingEmail;
+  if(existing) updateByKey_(sh,'employeeId',u.employeeId,{email:finalEmail,updatedAt:new Date()}); else appendObject_(sh,{employeeId:u.employeeId,username:u.username,email:finalEmail,updatedAt:new Date()});
   let photo={};
   if(p.photoDataUrl){
     photo=uploadProfilePhotoForAdmin_(s,u,p.photoFileName,p.photoDataUrl,p.photoMimeType,true);
@@ -2017,9 +2037,11 @@ function uploadProfilePhotoForAdmin_(s,target,fileName,dataUrl,mimeType,allowSel
   return {photoUrl:url,photoDataUrl:b64,photoFileId:fileId,photoPath:photoPath,employeeId:target.employeeId,username:target.username};
 }
 
-function getEmployeeFile_(u) {
+function getEmployeeFile_(u, requestedYear) {
   if(!u || !u.employeeCode) throw new Error('Employee Id is required.');
-  const year=new Date().getFullYear(), props=PropertiesService.getScriptProperties();
+  const parsedYear=Number(requestedYear);
+  const year=Number.isInteger(parsedYear)&&parsedYear>=2020&&parsedYear<=2100?parsedYear:new Date().getFullYear();
+  const props=PropertiesService.getScriptProperties();
   let folder=null;
   const folderId=props.getProperty('EMPLOYEE_FOLDER_ID');
   if(folderId){ try { folder=DriveApp.getFolderById(folderId); } catch(e) {} }
@@ -2039,6 +2061,13 @@ function getEmployeeFile_(u) {
   folder.addFile(file); DriveApp.getRootFolder().removeFile(file);
   setupEmployeeSheets_(ss,u);
   return ss;
+}
+
+
+function getEmployeeFileForDate_(u,dateStr){
+  const d=normalizeAttendanceDate_(dateStr);
+  const y=d?Number(d.slice(0,4)):new Date().getFullYear();
+  return getEmployeeFile_(u,y);
 }
 
 function setupEmployeeSheets_(ss,u) {

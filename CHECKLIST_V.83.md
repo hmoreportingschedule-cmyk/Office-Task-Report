@@ -1,4 +1,4 @@
-# Office Task Report V.83 — Deep Review Checklist
+# Office Task Report V.85 — Deep Review Checklist
 
 ## Static / integration checks
 - Code.gs helper references reviewed; undefined underscore-suffixed helpers now fail the prebuild check.
@@ -11,11 +11,11 @@
 - Dynamic XLSX import regression blocked.
 - Manual Apps Script redirect replay blocked; Worker must use redirect: follow.
 
-## Logic fixes in V.83
+## Logic fixes in V.85
 - Added missing `formatAttendanceDate_()` used by `taskProgress_()`.
 - Task COMPLETE now preserves cumulative manually entered `actualMinutes`; it no longer replaces them with elapsed clock duration.
 - Removed obsolete My Requests CSV helper; Reports CSV remains available.
-- Version labels updated to V.83.
+- Version labels updated to V.85.
 
 ## Cloudflare configuration
 - Build command: `npm run build`
