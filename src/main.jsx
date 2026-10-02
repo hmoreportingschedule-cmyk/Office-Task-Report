@@ -10,15 +10,15 @@ import * as XLSX from "xlsx";
 import "./styles.css";
 
 // Office Task Report - Google Apps Script Web App
-// V.7: default endpoint configured; Vercel env variable can still override it.
-// Office Task Report - fixed production Apps Script endpoint.
+// V.28: production Apps Script endpoint updated.
+// Office Task Report - V.28 production Apps Script endpoint.
 // Deliberately do NOT allow a stale Vercel VITE_APPS_SCRIPT_URL value to override it.
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbwpHrngTPA6skC0VNaR3BWeXW_ELni6cd5wQSypzVGAXyL9cJEFlYBw1YHI07NrExYusg/exec";
+  "https://script.google.com/macros/s/AKfycbyfL_lBPCkUlHzvv0iWvbUyNmhjSE7dVh6yqHp0L4E9JAs8S6e9jDx3v2dKku3ClK6M/exec";
 
 async function api(action, payload = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
     const res = await fetch(API_URL, {
       method: "POST",
@@ -39,7 +39,7 @@ async function api(action, payload = {}) {
     return data;
   } catch (e) {
     if (e && e.name === "AbortError") {
-      throw new Error("Sign in timeout. Apps Script Web App deployment/access ya network connection check karein.");
+      throw new Error("Sign in timeout (30 sec). Apps Script Web App deployment/access ya network connection check karein.");
     }
     throw e;
   } finally {
